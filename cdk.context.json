@@ -1,0 +1,11 @@
+{
+  "availability-zones:account=019036088323:region=us-west-2": [
+    "us-west-2a",
+    "us-west-2b",
+    "us-west-2c",
+    "us-west-2d",
+    "us-west-2-lax-1a",
+    "us-west-2-lax-1b"
+  ],
+  "ami:account=019036088323:filters.image-type.0=machine:filters.name.0=aws-datasync-*:filters.state.0=available:owners.0=amazon:region=us-west-2": "ami-0633a431915245038"
+}
