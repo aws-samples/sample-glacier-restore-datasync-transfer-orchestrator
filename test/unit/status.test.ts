@@ -41,6 +41,7 @@ describe("status update helpers", () => {
         bucket: "my-bucket",
         filePaths: ["path/to/file1.dat", "path/to/file2.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       };
 
       const record = await createRequestRecord(request);
@@ -49,6 +50,7 @@ describe("status update helpers", () => {
       expect(record.bucket).toBe("my-bucket");
       expect(record.filePaths).toEqual(["path/to/file1.dat", "path/to/file2.dat"]);
       expect(record.retrievalTier).toBe("Standard");
+      expect(record.restoreDays).toBe(7);
       expect(record.status).toBe("Submitted");
       expect(record.submittedAt).toBe("2024-01-15T10:00:00.000Z");
       expect(record.objectCount).toBe(2);
@@ -63,6 +65,7 @@ describe("status update helpers", () => {
         bucket: "bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Bulk",
+        restoreDays: 7,
       };
 
       const record = await createRequestRecord(request);
@@ -78,6 +81,7 @@ describe("status update helpers", () => {
         bucket: "test-bucket",
         filePaths: ["a.txt"],
         retrievalTier: "Expedited",
+        restoreDays: 7,
       };
 
       await createRequestRecord(request);
@@ -101,10 +105,25 @@ describe("status update helpers", () => {
         bucket: "bucket",
         filePaths: ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       };
 
       const record = await createRequestRecord(request);
       expect(record.objectCount).toBe(5);
+    });
+
+    it("persists custom restoreDays value", async () => {
+      ddbMock.on(PutCommand).resolves({});
+
+      const request: RestoreRequest = {
+        bucket: "bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 21,
+      };
+
+      const record = await createRequestRecord(request);
+      expect(record.restoreDays).toBe(21);
     });
   });
 
@@ -240,6 +259,7 @@ describe("status update helpers", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
         status: "Submitted",
         submittedAt: "2024-01-15T10:00:00.000Z",
         objectCount: 1,

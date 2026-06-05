@@ -71,6 +71,21 @@
           <span id="tier-error" class="form-error" role="alert" aria-live="polite"></span>
         </div>
 
+        <div class="form-group">
+          <label for="restore-days-input">Restore Duration (days)</label>
+          <input
+            type="number"
+            id="restore-days-input"
+            name="restoreDays"
+            min="1"
+            max="30"
+            value="7"
+            aria-describedby="restore-days-help"
+          >
+          <small id="restore-days-help" class="form-help">Number of days the restored object remains accessible in S3 Standard (1–30, default 7)</small>
+          <span id="restore-days-error" class="form-error" role="alert" aria-live="polite"></span>
+        </div>
+
         <div class="form-actions">
           <button type="submit" id="submit-btn" class="btn btn-primary">Submit Restore Request</button>
         </div>

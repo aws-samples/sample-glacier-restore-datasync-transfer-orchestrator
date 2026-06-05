@@ -56,6 +56,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["path/to/file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       const result = await handler(event);
@@ -74,6 +75,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Bulk",
+        restoreDays: 14,
       });
 
       const result = await handler(event);
@@ -93,6 +95,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["data/file1.dat", "data/file2.dat"],
         retrievalTier: "Expedited",
+        restoreDays: 3,
       });
 
       await handler(event);
@@ -110,6 +113,7 @@ describe("POST /requests handler", () => {
       expect(payload.bucket).toBe("my-bucket");
       expect(payload.filePaths).toEqual(["data/file1.dat", "data/file2.dat"]);
       expect(payload.retrievalTier).toBe("Expedited");
+      expect(payload.restoreDays).toBe(3);
     });
 
     it("creates a request record in DynamoDB before invoking orchestrator", async () => {
@@ -120,6 +124,7 @@ describe("POST /requests handler", () => {
         bucket: "test-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       await handler(event);
@@ -131,6 +136,7 @@ describe("POST /requests handler", () => {
         bucket: "test-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
         status: "Submitted",
       });
     });
@@ -143,6 +149,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat", "file.dat", "other.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       await handler(event);
@@ -151,6 +158,28 @@ describe("POST /requests handler", () => {
       const item = ddbCalls[0].args[0].input.Item!;
       expect(item.filePaths).toEqual(["file.dat", "other.dat"]);
       expect(item.objectCount).toBe(2);
+    });
+
+    it("defaults restoreDays to 7 when not provided", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+      });
+
+      await handler(event);
+
+      const ddbCalls = ddbMock.commandCalls(PutCommand);
+      expect(ddbCalls[0].args[0].input.Item!.restoreDays).toBe(7);
+
+      const lambdaCalls = lambdaMock.commandCalls(InvokeCommand);
+      const payload = JSON.parse(
+        Buffer.from(lambdaCalls[0].args[0].input.Payload as Uint8Array).toString("utf-8")
+      );
+      expect(payload.restoreDays).toBe(7);
     });
   });
 
@@ -211,6 +240,36 @@ describe("POST /requests handler", () => {
       expect(body.errors.some((e: { field: string }) => e.field === "retrievalTier")).toBe(true);
     });
 
+    it("returns 400 when restoreDays is out of range", async () => {
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 0,
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body);
+      expect(body.errors.some((e: { field: string }) => e.field === "restoreDays")).toBe(true);
+    });
+
+    it("returns 400 when restoreDays exceeds maximum", async () => {
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 31,
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body);
+      expect(body.errors.some((e: { field: string }) => e.field === "restoreDays")).toBe(true);
+    });
+
     it("returns 400 with multiple errors when multiple fields are invalid", async () => {
       const event = makeEvent({
         bucket: "",
@@ -256,6 +315,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       const result = await handler(event);
@@ -273,6 +333,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       const result = await handler(event);
@@ -290,6 +351,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       const result = await handler(event);
@@ -306,6 +368,7 @@ describe("POST /requests handler", () => {
         bucket: "my-bucket",
         filePaths: ["file.dat"],
         retrievalTier: "Standard",
+        restoreDays: 7,
       });
 
       const result = await handler(event);

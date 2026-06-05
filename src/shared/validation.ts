@@ -11,6 +11,9 @@ import {
   MIN_FILE_PATHS,
   MAX_FILE_PATHS,
   VALID_RETRIEVAL_TIERS,
+  MIN_RESTORE_DAYS,
+  MAX_RESTORE_DAYS,
+  RESTORE_DURATION_DAYS,
 } from "./constants";
 
 /**
@@ -62,6 +65,32 @@ export function validateFilePath(filePath: unknown, index?: number): ValidationE
   }
 
   return errors;
+}
+
+/**
+ * Validates the restore days value.
+ * Must be an integer between MIN_RESTORE_DAYS and MAX_RESTORE_DAYS.
+ * Returns default value if undefined/null.
+ */
+export function validateRestoreDays(days: unknown): { value: number; errors: ValidationError[] } {
+  const errors: ValidationError[] = [];
+
+  // If not provided, use the default
+  if (days === undefined || days === null) {
+    return { value: RESTORE_DURATION_DAYS, errors: [] };
+  }
+
+  const numDays = typeof days === "string" ? parseInt(days, 10) : Number(days);
+
+  if (!Number.isInteger(numDays) || numDays < MIN_RESTORE_DAYS || numDays > MAX_RESTORE_DAYS) {
+    errors.push({
+      field: "restoreDays",
+      message: `Restore days must be an integer between ${MIN_RESTORE_DAYS} and ${MAX_RESTORE_DAYS}`,
+    });
+    return { value: RESTORE_DURATION_DAYS, errors };
+  }
+
+  return { value: numDays, errors: [] };
 }
 
 /**
@@ -154,6 +183,7 @@ export function validateRestoreRequest(input: {
   bucket?: unknown;
   filePaths?: unknown;
   retrievalTier?: unknown;
+  restoreDays?: unknown;
 }): ValidationResult {
   const allErrors: ValidationError[] = [];
 
@@ -162,6 +192,10 @@ export function validateRestoreRequest(input: {
 
   // Validate retrieval tier
   allErrors.push(...validateRetrievalTier(input.retrievalTier));
+
+  // Validate restore days
+  const { value: restoreDays, errors: daysErrors } = validateRestoreDays(input.restoreDays);
+  allErrors.push(...daysErrors);
 
   // Validate and deduplicate file paths (minimum 1 for any request)
   const { deduplicatedPaths, errors: pathErrors } = validateAndDeduplicateFilePaths(
@@ -178,6 +212,7 @@ export function validateRestoreRequest(input: {
     valid: true,
     errors: [],
     deduplicatedPaths,
+    restoreDays,
   };
 }
 

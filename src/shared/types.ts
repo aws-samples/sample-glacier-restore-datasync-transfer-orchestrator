@@ -32,6 +32,8 @@ export interface RestoreRequest {
   filePaths: string[];
   /** Speed tier for Glacier retrieval */
   retrievalTier: RetrievalTier;
+  /** Number of days the restored object remains in S3 Standard (1-30, default 7) */
+  restoreDays: number;
 }
 
 /** A single entry in the status change timeline */
@@ -48,11 +50,15 @@ export interface RestoreRequestRecord {
   bucket: string;
   filePaths: string[];
   retrievalTier: RetrievalTier;
+  /** Number of days the restored object remains in S3 Standard */
+  restoreDays: number;
   status: RequestStatus;
   /** ISO 8601 timestamp */
   submittedAt: string;
   /** ISO 8601 timestamp (set on completion) */
   completedAt?: string;
+  /** ISO 8601 timestamp when the restored objects expire back to Glacier */
+  restoreExpiresAt?: string;
   /** S3 Batch Operations job ID (if batch) */
   batchJobId?: string;
   /** DataSync task execution ARN */
@@ -100,4 +106,6 @@ export interface ValidationResult {
   errors: ValidationError[];
   /** Deduplicated file paths (only present when valid) */
   deduplicatedPaths?: string[];
+  /** Validated restore days (only present when valid) */
+  restoreDays?: number;
 }

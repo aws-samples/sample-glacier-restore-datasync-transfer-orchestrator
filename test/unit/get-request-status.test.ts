@@ -39,6 +39,7 @@ describe("GET /requests/{requestId} handler", () => {
       bucket: "my-glacier-bucket",
       filePaths: ["data/file1.dat", "data/file2.dat"],
       retrievalTier: "Standard",
+      restoreDays: 7,
       status: "Restore In Progress",
       submittedAt: "2024-01-15T10:00:00.000Z",
       objectCount: 2,
@@ -63,6 +64,7 @@ describe("GET /requests/{requestId} handler", () => {
       bucket: "my-bucket",
       filePaths: ["data/missing.dat"],
       retrievalTier: "Bulk",
+      restoreDays: 7,
       status: "Error",
       submittedAt: "2024-01-15T09:00:00.000Z",
       objectCount: 1,
@@ -86,6 +88,32 @@ describe("GET /requests/{requestId} handler", () => {
     const body = JSON.parse(result.body);
     expect(body.errorDetails).toHaveLength(1);
     expect(body.errorDetails[0].reason).toBe("Object not found");
+  });
+
+  it("returns 200 with restoreExpiresAt when restore has completed", async () => {
+    const mockRecord: RestoreRequestRecord = {
+      requestId: "01HTEST000000000000000005",
+      bucket: "my-glacier-bucket",
+      filePaths: ["data/file1.dat"],
+      retrievalTier: "Standard",
+      restoreDays: 14,
+      status: "Transfer Complete",
+      submittedAt: "2024-01-15T10:00:00.000Z",
+      completedAt: "2024-01-15T12:00:00.000Z",
+      restoreExpiresAt: "2024-01-29T11:30:00.000Z",
+      objectCount: 1,
+      restoredCount: 1,
+      ttl: 1234567890,
+    };
+
+    ddbMock.on(QueryCommand).resolves({ Items: [mockRecord] });
+
+    const result = await handler(makeEvent("01HTEST000000000000000005"));
+
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body);
+    expect(body.restoreExpiresAt).toBe("2024-01-29T11:30:00.000Z");
+    expect(body.restoreDays).toBe(14);
   });
 
   it("returns 404 when request is not found", async () => {

@@ -107,6 +107,15 @@ describe("initiate-restore", () => {
       expect(calls[0].args[0].input.RestoreRequest?.Days).toBe(7);
     });
 
+    it("uses custom restore days when provided", async () => {
+      s3Mock.on(RestoreObjectCommand).resolves({});
+
+      await initiateRestore("my-bucket", "file.dat", "Standard", 14);
+
+      const calls = s3Mock.commandCalls(RestoreObjectCommand);
+      expect(calls[0].args[0].input.RestoreRequest?.Days).toBe(14);
+    });
+
     it("retries on throttling errors", async () => {
       s3Mock
         .on(RestoreObjectCommand)
@@ -175,6 +184,22 @@ describe("initiate-restore", () => {
       expect(input.RoleArn).toBe("arn:aws:iam::123456789012:role/BatchRole");
       expect(input.ConfirmationRequired).toBe(false);
       expect(input.Operation?.S3InitiateRestoreObject?.ExpirationInDays).toBe(7);
+    });
+
+    it("uses custom restore days for batch job", async () => {
+      await createBatchRestoreJob(
+        "source-bucket",
+        filePaths,
+        "Standard",
+        "staging-bucket",
+        "123456789012",
+        "arn:aws:iam::123456789012:role/BatchRole",
+        21
+      );
+
+      const createCalls = s3ControlMock.commandCalls(CreateJobCommand);
+      const input = createCalls[0].args[0].input;
+      expect(input.Operation?.S3InitiateRestoreObject?.ExpirationInDays).toBe(21);
     });
 
     it("maps Standard tier to STANDARD for batch job", async () => {
@@ -339,6 +364,38 @@ describe("initiate-restore", () => {
       expect(
         calls[0].args[0].input.RestoreRequest?.GlacierJobParameters?.Tier
       ).toBe("Expedited");
+    });
+
+    it("passes custom restoreDays to individual RestoreObject calls", async () => {
+      await initiateRestores(
+        "bucket",
+        ["file.dat"],
+        "Standard",
+        "staging",
+        "123456789012",
+        "arn:aws:iam::123456789012:role/Role",
+        21
+      );
+
+      const calls = s3Mock.commandCalls(RestoreObjectCommand);
+      expect(calls[0].args[0].input.RestoreRequest?.Days).toBe(21);
+    });
+
+    it("passes custom restoreDays to batch job", async () => {
+      const filePaths = Array.from({ length: 51 }, (_, i) => `file-${i}.dat`);
+
+      await initiateRestores(
+        "bucket",
+        filePaths,
+        "Standard",
+        "staging",
+        "123456789012",
+        "arn:aws:iam::123456789012:role/Role",
+        14
+      );
+
+      const createCalls = s3ControlMock.commandCalls(CreateJobCommand);
+      expect(createCalls[0].args[0].input.Operation?.S3InitiateRestoreObject?.ExpirationInDays).toBe(14);
     });
   });
 });
