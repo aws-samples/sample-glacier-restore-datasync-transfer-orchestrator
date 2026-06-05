@@ -11,6 +11,7 @@ export type StorageClass = "GLACIER" | "DEEP_ARCHIVE" | "GLACIER_IR";
 /** All possible request status values */
 export type RequestStatus =
   | "Submitted"
+  | "Resolving Paths"
   | "Detecting Storage Class"
   | "Initiating Restore"
   | "Restore In Progress"
@@ -61,6 +62,8 @@ export interface RestoreRequestRecord {
   restoreExpiresAt?: string;
   /** S3 Batch Operations job ID (if batch) */
   batchJobId?: string;
+  /** S3 key of the batch restore manifest in the staging bucket (for ≥50 objects) */
+  manifestKey?: string;
   /** DataSync task execution ARN */
   dataSyncTaskArn?: string;
   /** Total objects in request */

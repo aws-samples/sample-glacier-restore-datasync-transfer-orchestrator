@@ -48,7 +48,7 @@
             placeholder="path/to/file1.dat&#10;path/to/file2.dat"
             aria-describedby="file-paths-help"
           ></textarea>
-          <small id="file-paths-help" class="form-help">One S3 object key per line (1–1000 unique paths, each ≤1024 characters)</small>
+          <small id="file-paths-help" class="form-help">One S3 object key per line (1–1000 unique paths, each ≤1024 characters). Supports wildcards: path/to/*.exr</small>
           <span id="file-paths-error" class="form-error" role="alert" aria-live="polite"></span>
         </div>
 
@@ -104,6 +104,7 @@
           <select id="status-filter" aria-label="Filter requests by status">
             <option value="">All Statuses</option>
             <option value="Submitted">Submitted</option>
+            <option value="Resolving Paths">Resolving Paths</option>
             <option value="Detecting Storage Class">Detecting Storage Class</option>
             <option value="Initiating Restore">Initiating Restore</option>
             <option value="Restore In Progress">Restore In Progress</option>

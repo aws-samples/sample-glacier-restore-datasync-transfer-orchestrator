@@ -96,6 +96,15 @@ export class OrchestratorConstruct extends Construct {
       })
     );
 
+    // S3 permissions: ListBucket for glob pattern expansion
+    this.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:ListBucket'],
+        resources: ['arn:aws:s3:::*'],
+      })
+    );
+
     // S3 permissions: PutObject on staging bucket for batch manifests
     this.function.addToRolePolicy(
       new iam.PolicyStatement({

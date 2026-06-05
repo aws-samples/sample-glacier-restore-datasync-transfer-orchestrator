@@ -29,6 +29,7 @@ export class IlmDatasyncStack extends cdk.Stack {
     const api = new ApiConstruct(this, 'Api', {
       table: persistence.table,
       orchestratorFunction: orchestrator.function,
+      stagingBucket: envConfig.stagingBucket,
     });
 
     // 4. Web UI — S3 + CloudFront static hosting

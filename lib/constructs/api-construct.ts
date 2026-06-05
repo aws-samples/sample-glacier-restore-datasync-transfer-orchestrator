@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib/core';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -13,6 +14,8 @@ export interface ApiConstructProps {
   table: dynamodb.ITable;
   /** Orchestrator Lambda function (ORCHESTRATOR_FUNCTION_NAME env var on submit handler) */
   orchestratorFunction: lambda.IFunction;
+  /** Staging bucket name for manifest pre-signed URLs */
+  stagingBucket?: string;
 }
 
 /**
@@ -121,5 +124,39 @@ export class ApiConstruct extends Construct {
       'GET',
       new apigateway.LambdaIntegration(getRequestStatusFn)
     );
+
+    // --- Get Manifest URL Handler (GET /requests/{requestId}/manifest) ---
+    if (props.stagingBucket) {
+      const getManifestUrlFn = new nodejs.NodejsFunction(this, 'GetManifestUrlFunction', {
+        entry: 'src/api/get-manifest-url.ts',
+        handler: 'handler',
+        runtime: lambda.Runtime.NODEJS_20_X,
+        memorySize: 256,
+        timeout: cdk.Duration.seconds(30),
+        environment: {
+          TABLE_NAME: props.table.tableName,
+          STAGING_BUCKET: props.stagingBucket,
+        },
+        bundling: {
+          minify: true,
+          sourceMap: true,
+          forceDockerBundling: false,
+        },
+      });
+
+      props.table.grantReadData(getManifestUrlFn);
+
+      // Grant S3 read access for generating pre-signed URLs
+      getManifestUrlFn.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['s3:GetObject'],
+        resources: [`arn:aws:s3:::${props.stagingBucket}/manifests/*`],
+      }));
+
+      const manifestResource = singleRequestResource.addResource('manifest');
+      manifestResource.addMethod(
+        'GET',
+        new apigateway.LambdaIntegration(getManifestUrlFn)
+      );
+    }
   }
 }

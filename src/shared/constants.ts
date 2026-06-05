@@ -134,6 +134,7 @@ export const DEEP_ARCHIVE_UNAVAILABLE_TIERS: readonly RetrievalTier[] = [
 /** All valid request status values */
 export const REQUEST_STATUSES: readonly RequestStatus[] = [
   "Submitted",
+  "Resolving Paths",
   "Detecting Storage Class",
   "Initiating Restore",
   "Restore In Progress",

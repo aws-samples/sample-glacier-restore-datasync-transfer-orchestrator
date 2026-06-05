@@ -41,6 +41,10 @@ import {
   initiateRestore,
 } from "./steps/initiate-restore";
 import {
+  expandAllGlobs,
+  isGlobPattern,
+} from "./steps/expand-globs";
+import {
   checkRestoreStatus,
   checkBatchJobStatus,
 } from "./steps/monitor-restore";
@@ -144,14 +148,38 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
     submittedAt = record.submittedAt;
   }
 
-  // Step 2: Update status and detect storage classes for all objects
+  // Step 2: Expand glob patterns if any file paths contain wildcards
+  const hasGlobs = event.filePaths.some(isGlobPattern);
+  let resolvedFilePaths: string[];
+
+  if (hasGlobs) {
+    await context.step("update-status-resolving-paths", async () => {
+      await updateRequestStatus(requestId, submittedAt, "Resolving Paths");
+    });
+
+    resolvedFilePaths = await context.step("expand-globs", async () => {
+      return await expandAllGlobs(event.bucket, event.filePaths);
+    });
+
+    // Update the record with the resolved file paths and object count
+    await context.step("update-resolved-paths", async () => {
+      await updateRequestStatus(requestId, submittedAt, "Resolving Paths", {
+        filePaths: resolvedFilePaths,
+        objectCount: resolvedFilePaths.length,
+      });
+    });
+  } else {
+    resolvedFilePaths = event.filePaths;
+  }
+
+  // Step 3: Update status and detect storage classes for all objects
   await context.step("update-status-detecting", async () => {
     await updateRequestStatus(requestId, submittedAt, "Detecting Storage Class");
   });
 
   const classResults = await context.map(
     "detect-storage-classes",
-    event.filePaths,
+    resolvedFilePaths,
     async (ctx, filePath) => {
       return await ctx.step(`head-object-${filePath}`, async () => {
         return await detectStorageClass(event.bucket, filePath);
@@ -196,6 +224,7 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
         await context.step("update-status-restore-in-progress", async () => {
           await updateRequestStatus(requestId, submittedAt, "Restore In Progress", {
             batchJobId: batchResult.jobId,
+            manifestKey: batchResult.manifestKey,
           });
         });
 
@@ -330,14 +359,14 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
       const expiresAt = new Date(Date.now() + event.restoreDays * 24 * 60 * 60 * 1000).toISOString();
       await updateRequestStatus(requestId, submittedAt, "Restore Complete", {
         restoreExpiresAt: expiresAt,
-        restoredCount: restoreFinalState.completedFiles.length + (event.filePaths.length - restoreFilePaths.length),
+        restoredCount: restoreFinalState.completedFiles.length + (resolvedFilePaths.length - restoreFilePaths.length),
       });
     });
   } else {
     // All objects are already accessible (Instant Retrieval or already restored)
     await context.step("update-restored-count-all-accessible", async () => {
       await updateRequestStatus(requestId, submittedAt, "Restore Complete", {
-        restoredCount: event.filePaths.length,
+        restoredCount: resolvedFilePaths.length,
       });
     });
   }
@@ -351,7 +380,7 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
     return await startDataSyncTransfer({
       taskArn: getDataSyncTaskArn(),
       stagingBucket: getStagingBucket(),
-      filePaths: event.filePaths,
+      filePaths: resolvedFilePaths,
       manifestAccessRoleArn: getDataSyncS3RoleArn(),
     });
   });

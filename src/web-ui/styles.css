@@ -647,3 +647,22 @@ body {
 .detail-file-item:nth-child(even) {
   background: #fafafa;
 }
+
+/* === Manifest Download === */
+.detail-manifest-note {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0 0 12px;
+}
+
+.btn-manifest {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.btn-manifest:hover:not(:disabled) {
+  background: #e8f0fe;
+}

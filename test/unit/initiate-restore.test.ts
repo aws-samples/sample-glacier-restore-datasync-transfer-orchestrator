@@ -235,7 +235,7 @@ describe("initiate-restore", () => {
     });
 
     it("returns the job ID", async () => {
-      const jobId = await createBatchRestoreJob(
+      const result = await createBatchRestoreJob(
         "bucket",
         filePaths,
         "Standard",
@@ -244,7 +244,8 @@ describe("initiate-restore", () => {
         "arn:aws:iam::123456789012:role/Role"
       );
 
-      expect(jobId).toBe("job-12345");
+      expect(result.jobId).toBe("job-12345");
+      expect(result.manifestKey).toMatch(/^manifests\/restore-\d+\.csv$/);
     });
 
     it("throws if CreateJob does not return a JobId", async () => {

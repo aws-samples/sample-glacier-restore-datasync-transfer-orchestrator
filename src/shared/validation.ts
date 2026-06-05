@@ -42,8 +42,9 @@ export function validateBucket(bucket: unknown): ValidationError[] {
 }
 
 /**
- * Validates a single file path.
+ * Validates a single file path or glob pattern.
  * Must be a non-empty string of at most 1024 characters.
+ * Allows `*` wildcard for glob patterns.
  */
 export function validateFilePath(filePath: unknown, index?: number): ValidationError[] {
   const errors: ValidationError[] = [];
