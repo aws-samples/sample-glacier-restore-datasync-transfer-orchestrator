@@ -2,6 +2,7 @@ import {
   validateBucket,
   validateFilePath,
   validateRetrievalTier,
+  validateRestoreDays,
   validateAndDeduplicateFilePaths,
   validateRestoreRequest,
   validateBatchRestoreRequest,
@@ -117,6 +118,74 @@ describe("validateRetrievalTier", () => {
   });
 });
 
+describe("validateRestoreDays", () => {
+  it("accepts valid integer within range", () => {
+    const result = validateRestoreDays(7);
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(7);
+  });
+
+  it("accepts minimum value (1)", () => {
+    const result = validateRestoreDays(1);
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(1);
+  });
+
+  it("accepts maximum value (30)", () => {
+    const result = validateRestoreDays(30);
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(30);
+  });
+
+  it("defaults to 7 when undefined", () => {
+    const result = validateRestoreDays(undefined);
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(7);
+  });
+
+  it("defaults to 7 when null", () => {
+    const result = validateRestoreDays(null);
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(7);
+  });
+
+  it("rejects value below minimum (0)", () => {
+    const result = validateRestoreDays(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe("restoreDays");
+  });
+
+  it("rejects value above maximum (31)", () => {
+    const result = validateRestoreDays(31);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe("restoreDays");
+  });
+
+  it("rejects non-integer values", () => {
+    const result = validateRestoreDays(3.5);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe("restoreDays");
+  });
+
+  it("accepts string that parses to valid integer", () => {
+    const result = validateRestoreDays("14");
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(14);
+  });
+
+  it("rejects non-numeric string", () => {
+    const result = validateRestoreDays("abc");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe("restoreDays");
+  });
+
+  it("rejects negative values", () => {
+    const result = validateRestoreDays(-5);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe("restoreDays");
+  });
+});
+
 describe("validateAndDeduplicateFilePaths", () => {
   it("deduplicates paths and returns unique set", () => {
     const result = validateAndDeduplicateFilePaths(
@@ -176,6 +245,18 @@ describe("validateRestoreRequest", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
     expect(result.deduplicatedPaths).toEqual(["path/to/file.txt"]);
+    expect(result.restoreDays).toBe(7);
+  });
+
+  it("accepts a valid request with custom restoreDays", () => {
+    const result = validateRestoreRequest({
+      bucket: "my-bucket",
+      filePaths: ["file1.txt"],
+      retrievalTier: "Standard",
+      restoreDays: 14,
+    });
+    expect(result.valid).toBe(true);
+    expect(result.restoreDays).toBe(14);
   });
 
   it("accepts a valid multi-file request", () => {
@@ -186,6 +267,18 @@ describe("validateRestoreRequest", () => {
     });
     expect(result.valid).toBe(true);
     expect(result.deduplicatedPaths).toEqual(["file1.txt", "file2.txt"]);
+    expect(result.restoreDays).toBe(7);
+  });
+
+  it("returns error when restoreDays is invalid", () => {
+    const result = validateRestoreRequest({
+      bucket: "my-bucket",
+      filePaths: ["file1.txt"],
+      retrievalTier: "Standard",
+      restoreDays: 0,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.field === "restoreDays")).toBe(true);
   });
 
   it("returns multiple field errors when multiple fields are invalid", () => {

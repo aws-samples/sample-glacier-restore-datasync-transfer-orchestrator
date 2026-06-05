@@ -50,6 +50,7 @@ export async function createRequestRecord(
     bucket: request.bucket,
     filePaths: request.filePaths,
     retrievalTier: request.retrievalTier,
+    restoreDays: request.restoreDays,
     status: "Submitted",
     submittedAt: now,
     objectCount: request.filePaths.length,

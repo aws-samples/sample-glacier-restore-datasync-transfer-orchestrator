@@ -53,6 +53,7 @@ export async function handler(
     bucket: input.bucket,
     filePaths: input.filePaths,
     retrievalTier: input.retrievalTier,
+    restoreDays: input.restoreDays,
   });
 
   if (!validationResult.valid) {
@@ -68,6 +69,7 @@ export async function handler(
     bucket: input.bucket as string,
     filePaths: validationResult.deduplicatedPaths!,
     retrievalTier: input.retrievalTier as string,
+    restoreDays: validationResult.restoreDays!,
   };
 
   // Create the request record in DynamoDB
@@ -77,6 +79,7 @@ export async function handler(
       bucket: restoreRequest.bucket,
       filePaths: restoreRequest.filePaths,
       retrievalTier: restoreRequest.retrievalTier as "Expedited" | "Standard" | "Bulk",
+      restoreDays: restoreRequest.restoreDays,
     });
   } catch (err) {
     return {
@@ -112,6 +115,7 @@ export async function handler(
             bucket: record.bucket,
             filePaths: record.filePaths,
             retrievalTier: record.retrievalTier,
+            restoreDays: record.restoreDays,
           })
         ),
       })

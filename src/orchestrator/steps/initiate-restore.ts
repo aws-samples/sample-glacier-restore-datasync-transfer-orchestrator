@@ -36,17 +36,19 @@ const s3ControlClient = new S3ControlClient({});
  * Initiates a Glacier restore for a single object.
  *
  * Issues a RestoreObject API call with the selected retrieval tier
- * and a restore duration of 7 days. Retries on throttling errors
+ * and a configurable restore duration. Retries on throttling errors
  * using the RESTORE_OBJECT_RETRY configuration.
  *
  * @param bucket - S3 bucket name
  * @param filePath - S3 object key
  * @param retrievalTier - Glacier retrieval tier (Expedited, Standard, or Bulk)
+ * @param restoreDays - Number of days to keep the restored copy available (defaults to RESTORE_DURATION_DAYS)
  */
 export async function initiateRestore(
   bucket: string,
   filePath: string,
-  retrievalTier: RetrievalTier
+  retrievalTier: RetrievalTier,
+  restoreDays: number = RESTORE_DURATION_DAYS
 ): Promise<void> {
   await retryWithBackoff(
     async () => {
@@ -55,7 +57,7 @@ export async function initiateRestore(
           Bucket: bucket,
           Key: filePath,
           RestoreRequest: {
-            Days: RESTORE_DURATION_DAYS,
+            Days: restoreDays,
             GlacierJobParameters: {
               Tier: retrievalTier,
             },
@@ -100,6 +102,7 @@ export function generateManifestCsv(
  * @param stagingBucket - S3 bucket for storing the manifest CSV
  * @param accountId - AWS account ID for the batch job
  * @param roleArn - IAM role ARN for the batch job to assume
+ * @param restoreDays - Number of days to keep the restored copy available (defaults to RESTORE_DURATION_DAYS)
  * @returns The batch job ID for status tracking
  */
 export async function createBatchRestoreJob(
@@ -108,7 +111,8 @@ export async function createBatchRestoreJob(
   retrievalTier: RetrievalTier,
   stagingBucket: string,
   accountId: string,
-  roleArn: string
+  roleArn: string,
+  restoreDays: number = RESTORE_DURATION_DAYS
 ): Promise<string> {
   // Step 1: Generate the CSV manifest
   const manifestCsv = generateManifestCsv(bucket, filePaths);
@@ -128,7 +132,7 @@ export async function createBatchRestoreJob(
           ConfirmationRequired: false,
           Operation: {
             S3InitiateRestoreObject: {
-              ExpirationInDays: RESTORE_DURATION_DAYS,
+              ExpirationInDays: restoreDays,
               GlacierJobTier: mapRetrievalTierToJobTier(retrievalTier),
             },
           },
@@ -234,6 +238,7 @@ async function uploadManifest(
  * @param stagingBucket - S3 bucket for batch manifest storage
  * @param accountId - AWS account ID (used for batch operations)
  * @param roleArn - IAM role ARN (used for batch operations)
+ * @param restoreDays - Number of days to keep the restored copy available (defaults to RESTORE_DURATION_DAYS)
  * @returns Mode used ('individual' or 'batch') and optional job ID
  */
 export async function initiateRestores(
@@ -242,7 +247,8 @@ export async function initiateRestores(
   retrievalTier: RetrievalTier,
   stagingBucket: string,
   accountId: string,
-  roleArn: string
+  roleArn: string,
+  restoreDays: number = RESTORE_DURATION_DAYS
 ): Promise<{ mode: "individual" | "batch"; jobId?: string }> {
   if (filePaths.length > BATCH_THRESHOLD) {
     const jobId = await createBatchRestoreJob(
@@ -251,14 +257,15 @@ export async function initiateRestores(
       retrievalTier,
       stagingBucket,
       accountId,
-      roleArn
+      roleArn,
+      restoreDays
     );
     return { mode: "batch", jobId };
   }
 
   // Individual restores for ≤50 objects
   await Promise.all(
-    filePaths.map((filePath) => initiateRestore(bucket, filePath, retrievalTier))
+    filePaths.map((filePath) => initiateRestore(bucket, filePath, retrievalTier, restoreDays))
   );
 
   return { mode: "individual" };

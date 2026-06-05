@@ -188,7 +188,8 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
             event.retrievalTier,
             getStagingBucket(),
             getAccountId(),
-            getBatchRoleArn()
+            getBatchRoleArn(),
+            event.restoreDays
           );
         });
 
@@ -253,7 +254,7 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
           initiationFilePaths,
           async (ctx, filePath) => {
             return await ctx.step(`restore-${filePath}`, async () => {
-              await initiateRestore(event.bucket, filePath, event.retrievalTier);
+              await initiateRestore(event.bucket, filePath, event.retrievalTier, event.restoreDays);
             });
           },
           { maxConcurrency: MAX_CONCURRENCY }
