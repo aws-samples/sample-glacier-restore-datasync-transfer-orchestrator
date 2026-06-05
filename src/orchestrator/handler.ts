@@ -330,6 +330,14 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
       const expiresAt = new Date(Date.now() + event.restoreDays * 24 * 60 * 60 * 1000).toISOString();
       await updateRequestStatus(requestId, submittedAt, "Restore Complete", {
         restoreExpiresAt: expiresAt,
+        restoredCount: restoreFinalState.completedFiles.length + (event.filePaths.length - restoreFilePaths.length),
+      });
+    });
+  } else {
+    // All objects are already accessible (Instant Retrieval or already restored)
+    await context.step("update-restored-count-all-accessible", async () => {
+      await updateRequestStatus(requestId, submittedAt, "Restore Complete", {
+        restoredCount: event.filePaths.length,
       });
     });
   }
