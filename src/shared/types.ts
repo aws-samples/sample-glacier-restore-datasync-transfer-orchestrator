@@ -57,6 +57,8 @@ export interface RestoreRequestRecord {
   submittedAt: string;
   /** ISO 8601 timestamp (set on completion) */
   completedAt?: string;
+  /** ISO 8601 timestamp when the restored objects expire back to Glacier */
+  restoreExpiresAt?: string;
   /** S3 Batch Operations job ID (if batch) */
   batchJobId?: string;
   /** DataSync task execution ARN */

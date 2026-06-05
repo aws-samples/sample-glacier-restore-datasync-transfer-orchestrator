@@ -327,7 +327,10 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
 
     // Update status to Restore Complete
     await context.step("update-status-restore-complete", async () => {
-      await updateRequestStatus(requestId, submittedAt, "Restore Complete");
+      const expiresAt = new Date(Date.now() + event.restoreDays * 24 * 60 * 60 * 1000).toISOString();
+      await updateRequestStatus(requestId, submittedAt, "Restore Complete", {
+        restoreExpiresAt: expiresAt,
+      });
     });
   }
 

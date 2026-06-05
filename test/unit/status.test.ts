@@ -50,6 +50,7 @@ describe("status update helpers", () => {
       expect(record.bucket).toBe("my-bucket");
       expect(record.filePaths).toEqual(["path/to/file1.dat", "path/to/file2.dat"]);
       expect(record.retrievalTier).toBe("Standard");
+      expect(record.restoreDays).toBe(7);
       expect(record.status).toBe("Submitted");
       expect(record.submittedAt).toBe("2024-01-15T10:00:00.000Z");
       expect(record.objectCount).toBe(2);
@@ -109,6 +110,20 @@ describe("status update helpers", () => {
 
       const record = await createRequestRecord(request);
       expect(record.objectCount).toBe(5);
+    });
+
+    it("persists custom restoreDays value", async () => {
+      ddbMock.on(PutCommand).resolves({});
+
+      const request: RestoreRequest = {
+        bucket: "bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 21,
+      };
+
+      const record = await createRequestRecord(request);
+      expect(record.restoreDays).toBe(21);
     });
   });
 
