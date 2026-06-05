@@ -113,7 +113,7 @@ export async function createBatchRestoreJob(
   accountId: string,
   roleArn: string,
   restoreDays: number = RESTORE_DURATION_DAYS
-): Promise<string> {
+): Promise<{ jobId: string; manifestKey: string }> {
   // Step 1: Generate the CSV manifest
   const manifestCsv = generateManifestCsv(bucket, filePaths);
   const manifestKey = `manifests/restore-${Date.now()}.csv`;
@@ -170,7 +170,7 @@ export async function createBatchRestoreJob(
     throw new Error("S3 Batch Operations CreateJob did not return a JobId");
   }
 
-  return response.JobId;
+  return { jobId: response.JobId, manifestKey };
 }
 
 /**
@@ -249,9 +249,9 @@ export async function initiateRestores(
   accountId: string,
   roleArn: string,
   restoreDays: number = RESTORE_DURATION_DAYS
-): Promise<{ mode: "individual" | "batch"; jobId?: string }> {
+): Promise<{ mode: "individual" | "batch"; jobId?: string; manifestKey?: string }> {
   if (filePaths.length > BATCH_THRESHOLD) {
-    const jobId = await createBatchRestoreJob(
+    const { jobId, manifestKey } = await createBatchRestoreJob(
       bucket,
       filePaths,
       retrievalTier,
@@ -260,7 +260,7 @@ export async function initiateRestores(
       roleArn,
       restoreDays
     );
-    return { mode: "batch", jobId };
+    return { mode: "batch", jobId, manifestKey };
   }
 
   // Individual restores for ≤50 objects

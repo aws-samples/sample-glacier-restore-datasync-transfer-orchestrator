@@ -45,6 +45,8 @@ export async function createRequestRecord(
   request: RestoreRequest
 ): Promise<RestoreRequestRecord> {
   const now = new Date().toISOString();
+  // If any paths contain wildcards, objectCount is unknown until glob expansion
+  const hasGlobs = request.filePaths.some((p) => p.includes("*"));
   const record: RestoreRequestRecord = {
     requestId: ulid(),
     bucket: request.bucket,
@@ -53,7 +55,7 @@ export async function createRequestRecord(
     restoreDays: request.restoreDays,
     status: "Submitted",
     submittedAt: now,
-    objectCount: request.filePaths.length,
+    objectCount: hasGlobs ? 0 : request.filePaths.length,
     restoredCount: 0,
     statusHistory: [{ status: "Submitted", timestamp: now }],
     ttl: Math.floor(Date.now() / 1000) + TTL_SECONDS,
