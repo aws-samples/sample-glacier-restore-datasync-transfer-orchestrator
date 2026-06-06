@@ -1,5 +1,5 @@
 {
-  "name": "ilm-datasync",
+  "name": "restore-transfer-orchestrator",
   "version": "0.1.0",
   "scripts": {
     "build": "tsc",
@@ -30,7 +30,7 @@
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@aws-sdk/s3-request-presigner": "^3.1063.0",
     "@aws/durable-execution-sdk-js": "^1.1.7",
-    "aws-cdk-lib": "^2.255.0",
+    "aws-cdk-lib": "^2.258.0",
     "constructs": "^10.5.0",
     "ulid": "^2.3.0"
   }

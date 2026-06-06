@@ -1,13 +1,13 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { Template } from 'aws-cdk-lib/assertions';
-import { IlmDatasyncStack } from '../lib/ilm-datasync-stack';
+import { RestoreTransferStack } from '../lib/restore-transfer-stack';
 
-describe('IlmDatasyncStack', () => {
+describe('RestoreTransferStack', () => {
   let template: Template;
 
   beforeAll(() => {
     const app = new cdk.App();
-    const stack = new IlmDatasyncStack(app, 'TestStack');
+    const stack = new RestoreTransferStack(app, 'TestStack');
     template = Template.fromStack(stack);
   });
 
