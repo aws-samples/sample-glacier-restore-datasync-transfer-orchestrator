@@ -57,29 +57,28 @@ export class WebUiConstruct extends Construct {
     this.distributionUrl = `https://${this.distribution.distributionDomainName}`;
 
     // Deploy web UI files from src/web-ui/ to the S3 bucket
+    // If an API URL is provided, also deploy a config.js with the runtime endpoint
+    const deploySources: s3deploy.ISource[] = [
+      s3deploy.Source.asset(path.join(__dirname, '../../src/web-ui')),
+    ];
+
+    if (props?.apiUrl) {
+      // Strip trailing slash to avoid double-slash when app appends paths
+      const apiUrl = props.apiUrl.replace(/\/+$/, '');
+      deploySources.push(
+        s3deploy.Source.data(
+          'config.js',
+          `window.__CONFIG__ = { apiUrl: "${apiUrl}" };`
+        ),
+      );
+    }
+
     new s3deploy.BucketDeployment(this, 'DeployWebUI', {
-      sources: [s3deploy.Source.asset(path.join(__dirname, '../../src/web-ui'))],
+      sources: deploySources,
       destinationBucket: websiteBucket,
       distribution: this.distribution,
       distributionPaths: ['/*'],
     });
-
-    // If an API URL is provided, deploy a config.js file with the API endpoint
-    if (props?.apiUrl) {
-      // Strip trailing slash to avoid double-slash when app appends paths
-      const apiUrl = props.apiUrl.replace(/\/+$/, '');
-      new s3deploy.BucketDeployment(this, 'DeployConfig', {
-        sources: [
-          s3deploy.Source.data(
-            'config.js',
-            `window.__CONFIG__ = { apiUrl: "${apiUrl}" };`
-          ),
-        ],
-        destinationBucket: websiteBucket,
-        distribution: this.distribution,
-        distributionPaths: ['/config.js'],
-      });
-    }
 
     // Output the CloudFront URL
     new cdk.CfnOutput(this, 'WebUiUrl', {

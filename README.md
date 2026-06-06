@@ -1,8 +1,10 @@
-# ILM DataSync
+# Restore and Transfer Orchestrator
 
 An AWS CDK application that orchestrates S3 Glacier restores and DataSync transfers. It provides a REST API and web UI for submitting restore requests, tracking their status, and automatically syncing specific restored objects to an on-premises NFS destination via AWS DataSync.
 
 ## Architecture
+
+![Architecture Diagram](docs/glacier-restore-transfer-arch.png)
 
 The stack deploys four main components:
 
@@ -38,7 +40,7 @@ The orchestrator handles each request intelligently:
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd ilm-datasync
+cd restore-transfer-orchestrator
 
 # Install dependencies
 npm install
@@ -77,7 +79,7 @@ export DATASYNC_S3_ROLE_ARN=arn:aws:iam::123456789012:role/DataSyncS3Role
 If this is your first CDK deployment in the target account/region, bootstrap the environment:
 
 ```bash
-npx cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
+cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
 ```
 
 ### Build and synthesize
@@ -87,18 +89,20 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
 npm run build
 
 # Preview the CloudFormation template
-npx cdk synth
+cdk synth
 ```
 
 ### Deploy
 
 ```bash
 # Review changes before deploying
-npx cdk diff
+cdk diff
 
 # Deploy the stack
-npx cdk deploy IlmDatasyncStack
+cdk deploy RestoreTransferStack
 ```
+
+> **Note:** If you don't already have prerequisite resources (DataSync task, S3 staging bucket, S3 Batch Operations role, DataSync S3 role), you can deploy the `RestoreTransferTestingStack` first — it provisions all of these for you. See [Testing Infrastructure](#testing-infrastructure-optional) below.
 
 The deploy command will output the API endpoint URL and the Web UI CloudFront URL.
 
@@ -106,12 +110,12 @@ The deploy command will output the API endpoint URL and the Web UI CloudFront UR
 
 ```bash
 # Deploy to production
-ENV=prod npx cdk deploy IlmDatasyncStack
+ENV=prod cdk deploy RestoreTransferStack
 ```
 
 ## Testing Infrastructure (Optional)
 
-An optional `IlmDatasyncTestingStack` provisions all prerequisite resources for dev/test:
+An optional `RestoreTransferTestingStack` provisions all prerequisite resources for dev/test:
 
 - VPC with public subnet
 - Source S3 bucket (with Glacier lifecycle rule)
@@ -129,7 +133,7 @@ An optional `IlmDatasyncTestingStack` provisions all prerequisite resources for 
 export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 export CDK_DEFAULT_REGION=us-west-2
 
-npx cdk deploy IlmDatasyncTestingStack \
+cdk deploy RestoreTransferTestingStack \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
 
@@ -141,7 +145,7 @@ curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&r
 # The activation key is in the Location header of the 302 response
 
 # Redeploy with the key
-npx cdk deploy IlmDatasyncTestingStack \
+cdk deploy RestoreTransferTestingStack \
   --parameters ActivationKey=XXXXX-XXXXX-XXXXX-XXXXX-XXXXX \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
@@ -149,23 +153,46 @@ npx cdk deploy IlmDatasyncTestingStack \
 **Deploy the main stack using testing infrastructure outputs:**
 
 ```bash
-export DATASYNC_TASK_ARN=$(aws cloudformation describe-stacks --stack-name IlmDatasyncTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncTaskArnOutput'].OutputValue" --output text)
-export STAGING_BUCKET=$(aws cloudformation describe-stacks --stack-name IlmDatasyncTestingStack --query "Stacks[0].Outputs[?OutputKey=='StagingBucketNameOutput'].OutputValue" --output text)
-export BATCH_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name IlmDatasyncTestingStack --query "Stacks[0].Outputs[?OutputKey=='BatchRoleArnOutput'].OutputValue" --output text)
-export DATASYNC_S3_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name IlmDatasyncTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncS3RoleArnOutput'].OutputValue" --output text)
+export DATASYNC_TASK_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncTaskArnOutput'].OutputValue" --output text)
+export STAGING_BUCKET=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='StagingBucketNameOutput'].OutputValue" --output text)
+export BATCH_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='BatchRoleArnOutput'].OutputValue" --output text)
+export DATASYNC_S3_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncS3RoleArnOutput'].OutputValue" --output text)
 
-npx cdk deploy IlmDatasyncStack
+cdk deploy RestoreTransferStack
 ```
 
 ### Upload test data
 
-A helper script uploads sample files to various Glacier storage classes:
+A helper script uploads sample files to various Glacier storage classes. It supports configurable file counts, folder nesting depth, and storage class selection — useful for testing glob patterns and batch operation thresholds.
 
 ```bash
-SOURCE_BUCKET=$(aws cloudformation describe-stacks --stack-name IlmDatasyncTestingStack \
+SOURCE_BUCKET=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack \
   --query "Stacks[0].Outputs[?OutputKey=='SourceBucketNameOutput'].OutputValue" --output text)
 
 ./scripts/upload-test-data.sh "$SOURCE_BUCKET"
+```
+
+**Options:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-n, --num-files <count>` | Number of files per storage class | 3 |
+| `-d, --depth <levels>` | Folder nesting depth (2–4 levels) | 2 |
+| `-s, --size <mb>` | Size of each file in MB | 1 |
+| `--flat` | No nested folders — all files at top level | off |
+| `--classes <list>` | Comma-separated storage classes | `GLACIER,GLACIER_IR,DEEP_ARCHIVE,INTELLIGENT_TIERING` |
+
+**Examples:**
+
+```bash
+# Deep nesting for glob pattern testing
+./scripts/upload-test-data.sh "$SOURCE_BUCKET" -n 10 -d 4
+
+# Flat structure, single class
+./scripts/upload-test-data.sh "$SOURCE_BUCKET" -n 5 --flat --classes GLACIER
+
+# Large batch to exceed the 50-object threshold (triggers S3 Batch Operations)
+./scripts/upload-test-data.sh "$SOURCE_BUCKET" -n 15 -d 3
 ```
 
 ## Development
@@ -178,7 +205,7 @@ npm run watch
 npm run test
 
 # Synthesize and check for drift
-npx cdk diff
+cdk diff
 ```
 
 ### Local UI development
@@ -187,7 +214,7 @@ Serve the web UI locally and point it at the deployed API:
 
 ```bash
 # Update config with your API URL
-API_URL=$(aws cloudformation describe-stacks --stack-name IlmDatasyncStack \
+API_URL=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
   --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
 echo "window.__CONFIG__ = { apiUrl: \"${API_URL%/}\" };" > src/web-ui/config.js
 
@@ -204,7 +231,7 @@ Open http://localhost:8080 in your browser.
 ├── lib/
 │   ├── config/             # Environment configuration
 │   ├── constructs/         # CDK construct definitions
-│   ├── ilm-datasync-stack.ts          # Main application stack
+│   ├── restore-transfer-stack.ts       # Main application stack
 │   └── testing-infrastructure-stack.ts # Optional test infrastructure
 ├── scripts/                # Helper scripts (test data upload)
 ├── src/
@@ -222,20 +249,20 @@ Open http://localhost:8080 in your browser.
 | `npm run build` | Compile TypeScript to JavaScript |
 | `npm run watch` | Watch for changes and recompile |
 | `npm run test` | Run Jest unit tests |
-| `npx cdk synth` | Emit the synthesized CloudFormation template |
-| `npx cdk diff` | Compare deployed stack with current state |
-| `npx cdk deploy IlmDatasyncStack` | Deploy the main application stack |
-| `npx cdk deploy IlmDatasyncTestingStack` | Deploy the testing infrastructure |
-| `npx cdk destroy IlmDatasyncStack` | Remove the main stack |
-| `npx cdk destroy IlmDatasyncTestingStack` | Remove the testing infrastructure |
+| `cdk synth` | Emit the synthesized CloudFormation template |
+| `cdk diff` | Compare deployed stack with current state |
+| `cdk deploy RestoreTransferStack` | Deploy the main application stack |
+| `cdk deploy RestoreTransferTestingStack` | Deploy the testing infrastructure |
+| `cdk destroy RestoreTransferStack` | Remove the main stack |
+| `cdk destroy RestoreTransferTestingStack` | Remove the testing infrastructure |
 
 ## Cleanup
 
 To tear down all deployed resources:
 
 ```bash
-npx cdk destroy IlmDatasyncStack
-npx cdk destroy IlmDatasyncTestingStack
+cdk destroy RestoreTransferStack
+cdk destroy RestoreTransferTestingStack
 ```
 
 Note: Destroy the main stack first, then the testing stack. The testing stack includes DynamoDB tables and S3 buckets that will be deleted along with their data.

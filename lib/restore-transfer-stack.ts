@@ -6,7 +6,7 @@ import { ApiConstruct } from './constructs/api-construct';
 import { WebUiConstruct } from './constructs/web-ui-construct';
 import { getEnvironmentConfig } from './config/environment';
 
-export class IlmDatasyncStack extends cdk.Stack {
+export class RestoreTransferStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 

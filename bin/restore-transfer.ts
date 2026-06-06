@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
-import { IlmDatasyncStack } from '../lib/ilm-datasync-stack';
+import { RestoreTransferStack } from '../lib/restore-transfer-stack';
 import { TestingInfrastructureStack } from '../lib/testing-infrastructure-stack';
 
 const app = new cdk.App();
 
 // Main application stack
-new IlmDatasyncStack(app, 'IlmDatasyncStack', {
+new RestoreTransferStack(app, 'RestoreTransferStack', {
   /* If you don't specify 'env', this stack will be environment-agnostic.
    * Account/Region-dependent features and context lookups will not work,
    * but a single synthesized template can be deployed anywhere. */
@@ -24,11 +24,11 @@ new IlmDatasyncStack(app, 'IlmDatasyncStack', {
 
 // Optional testing infrastructure stack — deploys prerequisite resources
 // (DataSync task, NFS server, staging bucket, etc.) for dev/test environments.
-// Deploy with: npx cdk deploy IlmDatasyncTestingStack
-new TestingInfrastructureStack(app, 'IlmDatasyncTestingStack', {
+// Deploy with: npx cdk deploy RestoreTransferTestingStack
+new TestingInfrastructureStack(app, 'RestoreTransferTestingStack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
   },
-  description: 'Testing infrastructure for ILM DataSync — includes DataSync task, NFS server, and staging bucket',
+  description: 'Testing infrastructure for Restore and Transfer Orchestrator — includes DataSync task, NFS server, and staging bucket',
 });

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan implements an end-to-end Glacier restore and DataSync transfer system using AWS CDK v2 (TypeScript) for infrastructure, Lambda Durable Functions for orchestration, and a lightweight web UI for operator visibility. Tasks are ordered to build foundational types and infrastructure first, then layer in orchestration logic, API handlers, and finally the web UI. The project uses the existing CDK scaffolding with `IlmDatasyncStack` in `lib/ilm-datasync-stack.ts`.
+This plan implements an end-to-end Glacier restore and DataSync transfer system using AWS CDK v2 (TypeScript) for infrastructure, Lambda Durable Functions for orchestration, and a lightweight web UI for operator visibility. Tasks are ordered to build foundational types and infrastructure first, then layer in orchestration logic, API handlers, and finally the web UI. The project uses the existing CDK scaffolding with `RestoreTransferStack` in `lib/restore-transfer-stack.ts`.
 
 ## Tasks
 
@@ -193,7 +193,7 @@ This plan implements an end-to-end Glacier restore and DataSync transfer system 
     - _Requirements: 6.1_
 
   - [x] 10.2 Assemble main CDK stack
-    - Update `lib/ilm-datasync-stack.ts` (the existing `IlmDatasyncStack` class) to compose all constructs: persistence, orchestrator, API, and web UI
+    - Update `lib/restore-transfer-stack.ts` (the existing `RestoreTransferStack` class) to compose all constructs: persistence, orchestrator, API, and web UI
     - Wire construct outputs (table name, API URL) as environment variables to Lambda functions
     - Export CloudFront URL and API endpoint as stack outputs
     - _Requirements: 11.1_
@@ -211,8 +211,8 @@ This plan implements an end-to-end Glacier restore and DataSync transfer system 
 - All infrastructure is defined using AWS CDK v2 with TypeScript
 - Lambda functions use `NodejsFunction` construct for esbuild bundling
 - The orchestrator uses `@aws/durable-execution-sdk-js` for durable execution primitives
-- The CDK app entry point is `bin/ilm-datasync.ts` with the `IlmDatasyncStack` class in `lib/ilm-datasync-stack.ts`
-- Existing project files (`package.json`, `cdk.json`, `tsconfig.json`, `jest.config.js`, `bin/ilm-datasync.ts`) are updated in place — not recreated
+- The CDK app entry point is `bin/restore-transfer.ts` with the `RestoreTransferStack` class in `lib/restore-transfer-stack.ts`
+- Existing project files (`package.json`, `cdk.json`, `tsconfig.json`, `jest.config.js`, `bin/restore-transfer.ts`) are updated in place — not recreated
 
 ## Task Dependency Graph
 

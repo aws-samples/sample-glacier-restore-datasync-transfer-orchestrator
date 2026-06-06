@@ -8,7 +8,7 @@ import { Construct } from 'constructs';
 
 /**
  * Optional testing infrastructure stack that provisions the prerequisite
- * resources needed by the IlmDatasyncStack:
+ * resources needed by the RestoreTransferStack:
  *
  * - VPC with public subnet
  * - Source S3 bucket (with Glacier lifecycle rule for testing)
@@ -24,11 +24,11 @@ import { Construct } from 'constructs';
  * ## Two-phase deployment:
  *
  * Phase 1 — Deploy without activation key to stand up EC2 instances:
- *   npx cdk deploy IlmDatasyncTestingStack
+ *   npx cdk deploy RestoreTransferTestingStack
  *
  * Phase 2 — Get the activation key from the agent, then redeploy:
  *   curl "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=<region>&redirect_type=TEXT"
- *   npx cdk deploy IlmDatasyncTestingStack --parameters ActivationKey=<key>
+ *   npx cdk deploy RestoreTransferTestingStack --parameters ActivationKey=<key>
  */
 export class TestingInfrastructureStack extends cdk.Stack {
   /** ARN of the DataSync task */
@@ -149,7 +149,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     // Only created when an activation key is provided (phase 2 deploy)
     const agent = new datasync.CfnAgent(this, 'Agent', {
       activationKey: activationKeyParam.valueAsString,
-      agentName: 'IlmDatasyncTestAgent',
+      agentName: 'RestoreTransferTestAgent',
     });
     (agent.node.defaultChild as cdk.CfnResource ?? agent).cfnOptions.condition = hasActivationKey;
 
@@ -253,7 +253,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
 
     // ─── DataSync Task (conditional) ───────────────────────────────────
     const taskLogGroup = new logs.LogGroup(this, 'DataSyncTaskLogGroup', {
-      logGroupName: `/aws/datasync/IlmDatasyncTestTask`,
+      logGroupName: `/aws/datasync/RestoreTransferTestTask`,
       retention: logs.RetentionDays.TWO_WEEKS,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -283,7 +283,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     const task = new datasync.CfnTask(this, 'DataSyncTask', {
       sourceLocationArn: s3Location.attrLocationArn,
       destinationLocationArn: nfsLocation.attrLocationArn,
-      name: 'IlmDatasyncTestTask',
+      name: 'RestoreTransferTestTask',
       cloudWatchLogGroupArn: taskLogGroup.logGroupArn,
       options: {
         verifyMode: 'ONLY_FILES_TRANSFERRED',
@@ -325,26 +325,26 @@ export class TestingInfrastructureStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DataSyncTaskArnOutput', {
       value: task.attrTaskArn,
       description: 'DataSync task ARN — use as DATASYNC_TASK_ARN',
-      exportName: 'IlmDatasyncTest-DataSyncTaskArn',
+      exportName: 'RestoreTransferTest-DataSyncTaskArn',
       condition: hasActivationKey,
     });
 
     new cdk.CfnOutput(this, 'StagingBucketNameOutput', {
       value: stagingBucket.bucketName,
       description: 'Staging bucket name — use as STAGING_BUCKET',
-      exportName: 'IlmDatasyncTest-StagingBucket',
+      exportName: 'RestoreTransferTest-StagingBucket',
     });
 
     new cdk.CfnOutput(this, 'BatchRoleArnOutput', {
       value: batchRole.roleArn,
       description: 'S3 Batch Operations role ARN — use as BATCH_ROLE_ARN',
-      exportName: 'IlmDatasyncTest-BatchRoleArn',
+      exportName: 'RestoreTransferTest-BatchRoleArn',
     });
 
     new cdk.CfnOutput(this, 'DataSyncS3RoleArnOutput', {
       value: dataSyncS3Role.roleArn,
       description: 'DataSync S3 access role ARN — use as DATASYNC_S3_ROLE_ARN',
-      exportName: 'IlmDatasyncTest-DataSyncS3RoleArn',
+      exportName: 'RestoreTransferTest-DataSyncS3RoleArn',
     });
 
     new cdk.CfnOutput(this, 'SourceBucketNameOutput', {
@@ -363,7 +363,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'AgentActivationCommand', {
-      value: `curl "http://${agentInstance.instancePublicIp}/?gatewayType=SYNC&activationRegion=${this.region}&redirect_type=TEXT"`,
+      value: `curl -v "http://${agentInstance.instancePublicIp}/?gatewayType=SYNC&activationRegion=${this.region}&redirect_type=TEXT"`,
       description: 'Run this after Phase 1 deploy to get the activation key for Phase 2',
     });
   }

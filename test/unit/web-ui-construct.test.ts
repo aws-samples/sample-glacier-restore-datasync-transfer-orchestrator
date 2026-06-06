@@ -82,9 +82,9 @@ describe('WebUiConstruct', () => {
   });
 
   test('creates a config.js deployment when apiUrl is provided', () => {
-    // Should have two BucketDeployment resources (web UI files + config.js)
+    // Single BucketDeployment with multiple sources (web UI files + config.js)
     const deployments = template.findResources('Custom::CDKBucketDeployment');
-    expect(Object.keys(deployments).length).toBe(2);
+    expect(Object.keys(deployments).length).toBe(1);
   });
 
   test('exposes the CloudFront distribution URL as a public property', () => {
