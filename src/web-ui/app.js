@@ -250,17 +250,55 @@
     }
   }
 
+  // --- 401 Handling ---
+
+  /**
+   * Handle a 401 response by attempting token refresh and retrying the request.
+   * If refresh fails, redirects to login.
+   * @param {Function} retryFn - An async function that retries the original request with a fresh token.
+   * @returns {Response|null} The retried response, or null if redirect occurred.
+   */
+  async function handleUnauthorized(retryFn) {
+    var refreshed = await window.refreshTokens();
+    if (refreshed) {
+      return await retryFn();
+    }
+    window.redirectToLogin();
+    return null;
+  }
+
   // --- API Integration ---
 
   /**
    * Submit a restore request to the API.
    */
   async function submitRequest(bucket, filePaths, retrievalTier, restoreDays) {
+    var token = await window.getIdToken();
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
     const response = await fetch(API_BASE_URL + '/requests', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays }),
     });
+
+    if (response.status === 401) {
+      var retryResponse = await handleUnauthorized(async function () {
+        var newToken = await window.getIdToken();
+        var retryHeaders = { 'Content-Type': 'application/json' };
+        if (newToken) retryHeaders['Authorization'] = 'Bearer ' + newToken;
+        return fetch(API_BASE_URL + '/requests', {
+          method: 'POST',
+          headers: retryHeaders,
+          body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays }),
+        });
+      });
+      if (!retryResponse) return; // redirected to login
+      var retryData = await retryResponse.json();
+      if (!retryResponse.ok) throw new Error(retryData.message || retryData.error || 'Request failed');
+      return retryData;
+    }
 
     const data = await response.json();
 
@@ -280,7 +318,23 @@
       url += '?status=' + encodeURIComponent(statusFilterValue);
     }
 
-    const response = await fetch(url);
+    var token = await window.getIdToken();
+    var headers = {};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    const response = await fetch(url, { headers: headers });
+
+    if (response.status === 401) {
+      var retryResponse = await handleUnauthorized(async function () {
+        var newToken = await window.getIdToken();
+        var retryHeaders = {};
+        if (newToken) retryHeaders['Authorization'] = 'Bearer ' + newToken;
+        return fetch(url, { headers: retryHeaders });
+      });
+      if (!retryResponse) return []; // redirected to login
+      if (!retryResponse.ok) throw new Error('Failed to fetch requests');
+      return retryResponse.json();
+    }
 
     if (!response.ok) {
       throw new Error('Failed to fetch requests');
@@ -294,7 +348,30 @@
    */
   async function fetchManifestUrl(requestId) {
     try {
-      var response = await fetch(API_BASE_URL + '/requests/' + encodeURIComponent(requestId) + '/manifest');
+      var token = await window.getIdToken();
+      var headers = {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+
+      var response = await fetch(API_BASE_URL + '/requests/' + encodeURIComponent(requestId) + '/manifest', { headers: headers });
+
+      if (response.status === 401) {
+        var retryResponse = await handleUnauthorized(async function () {
+          var newToken = await window.getIdToken();
+          var retryHeaders = {};
+          if (newToken) retryHeaders['Authorization'] = 'Bearer ' + newToken;
+          return fetch(API_BASE_URL + '/requests/' + encodeURIComponent(requestId) + '/manifest', { headers: retryHeaders });
+        });
+        if (!retryResponse) return; // redirected to login
+        if (!retryResponse.ok) {
+          var errData = await retryResponse.json();
+          console.error('[fetchManifestUrl]', errData.error || 'Failed to get manifest URL');
+          return;
+        }
+        var retryData = await retryResponse.json();
+        if (retryData.url) window.open(retryData.url, '_blank');
+        return;
+      }
+
       if (!response.ok) {
         var errData = await response.json();
         console.error('[fetchManifestUrl]', errData.error || 'Failed to get manifest URL');
@@ -502,7 +579,24 @@
 
   // --- Initialization ---
 
-  function init() {
+  async function init() {
+    // Authenticate first — halt if user is being redirected to login
+    var authenticated = await window.initAuth();
+    if (!authenticated) return;
+
+    // Display authenticated user's email in the header
+    var userEmail = window.getUserEmail();
+    var userEmailEl = document.getElementById('user-email');
+    var userInfoEl = document.getElementById('user-info');
+    if (userEmail && userEmailEl && userInfoEl) {
+      userEmailEl.textContent = userEmail;
+      userInfoEl.hidden = false;
+    }
+
+    // Wire logout button
+    var logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', window.logout);
+
     // Form submission
     form.addEventListener('submit', handleSubmit);
 
@@ -526,7 +620,26 @@
     if (!requestId) return;
 
     try {
-      var response = await fetch(API_BASE_URL + '/requests/' + encodeURIComponent(requestId));
+      var token = await window.getIdToken();
+      var headers = {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+
+      var response = await fetch(API_BASE_URL + '/requests/' + encodeURIComponent(requestId), { headers: headers });
+
+      if (response.status === 401) {
+        var retryResponse = await handleUnauthorized(async function () {
+          var newToken = await window.getIdToken();
+          var retryHeaders = {};
+          if (newToken) retryHeaders['Authorization'] = 'Bearer ' + newToken;
+          return fetch(API_BASE_URL + '/requests/' + encodeURIComponent(requestId), { headers: retryHeaders });
+        });
+        if (!retryResponse) return; // redirected to login
+        if (!retryResponse.ok) throw new Error('Failed to fetch request detail');
+        var retryDetail = await retryResponse.json();
+        showDetailPanel(retryDetail);
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to fetch request detail');
       var detail = await response.json();
       showDetailPanel(detail);
@@ -556,7 +669,9 @@
     // Header
     var header = document.createElement('div');
     header.className = 'detail-header';
-    header.innerHTML = '<h3>Request Detail</h3>';
+    var headerTitle = document.createElement('h3');
+    headerTitle.textContent = 'Request Detail';
+    header.appendChild(headerTitle);
     var closeBtn = document.createElement('button');
     closeBtn.className = 'detail-close';
     closeBtn.textContent = '✕';
@@ -568,22 +683,59 @@
     // Summary
     var summary = document.createElement('div');
     summary.className = 'detail-summary';
-    summary.innerHTML =
-      '<div class="detail-field"><span class="detail-label">Request ID</span><span class="detail-value">' + (detail.requestId || '—') + '</span></div>' +
-      '<div class="detail-field"><span class="detail-label">Bucket</span><span class="detail-value">' + (detail.bucket || '—') + '</span></div>' +
-      '<div class="detail-field"><span class="detail-label">Status</span><span class="detail-value"><span class="status-badge ' + getStatusBadgeClass(detail.status) + '">' + (detail.status || 'Unknown') + '</span></span></div>' +
-      '<div class="detail-field"><span class="detail-label">Retrieval Tier</span><span class="detail-value">' + (detail.retrievalTier || '—') + '</span></div>' +
-      '<div class="detail-field"><span class="detail-label">Restore Duration</span><span class="detail-value">' + (detail.restoreDays ? detail.restoreDays + ' days' : '—') + '</span></div>' +
-      '<div class="detail-field"><span class="detail-label">Objects</span><span class="detail-value">' + (detail.restoredCount || 0) + ' / ' + (detail.objectCount || 0) + '</span></div>' +
-      '<div class="detail-field"><span class="detail-label">Submitted</span><span class="detail-value">' + formatTimestamp(detail.submittedAt) + '</span></div>' +
-      (detail.restoreExpiresAt ? '<div class="detail-field"><span class="detail-label">Restore Expires</span><span class="detail-value">' + formatTimestamp(detail.restoreExpiresAt) + '</span></div>' : '') +
-      (detail.completedAt ? '<div class="detail-field"><span class="detail-label">Completed</span><span class="detail-value">' + formatTimestamp(detail.completedAt) + '</span></div>' : '');
+
+    function createDetailField(label, value) {
+      var field = document.createElement('div');
+      field.className = 'detail-field';
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'detail-label';
+      labelSpan.textContent = label;
+      var valueSpan = document.createElement('span');
+      valueSpan.className = 'detail-value';
+      valueSpan.textContent = value;
+      field.appendChild(labelSpan);
+      field.appendChild(valueSpan);
+      return field;
+    }
+
+    function createDetailFieldWithBadge(label, statusText, badgeClass) {
+      var field = document.createElement('div');
+      field.className = 'detail-field';
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'detail-label';
+      labelSpan.textContent = label;
+      var valueSpan = document.createElement('span');
+      valueSpan.className = 'detail-value';
+      var badge = document.createElement('span');
+      badge.className = 'status-badge ' + badgeClass;
+      badge.textContent = statusText;
+      valueSpan.appendChild(badge);
+      field.appendChild(labelSpan);
+      field.appendChild(valueSpan);
+      return field;
+    }
+
+    summary.appendChild(createDetailField('Request ID', detail.requestId || '—'));
+    summary.appendChild(createDetailField('Bucket', detail.bucket || '—'));
+    summary.appendChild(createDetailFieldWithBadge('Status', detail.status || 'Unknown', getStatusBadgeClass(detail.status)));
+    summary.appendChild(createDetailField('Retrieval Tier', detail.retrievalTier || '—'));
+    summary.appendChild(createDetailField('Restore Duration', detail.restoreDays ? detail.restoreDays + ' days' : '—'));
+    summary.appendChild(createDetailField('Objects', (detail.restoredCount || 0) + ' / ' + (detail.objectCount || 0)));
+    summary.appendChild(createDetailField('Submitted', formatTimestamp(detail.submittedAt)));
+    if (detail.restoreExpiresAt) {
+      summary.appendChild(createDetailField('Restore Expires', formatTimestamp(detail.restoreExpiresAt)));
+    }
+    if (detail.completedAt) {
+      summary.appendChild(createDetailField('Completed', formatTimestamp(detail.completedAt)));
+    }
     panel.appendChild(summary);
 
     // Timeline
     var timelineSection = document.createElement('div');
     timelineSection.className = 'detail-timeline-section';
-    timelineSection.innerHTML = '<h4>Status Timeline</h4>';
+    var timelineHeading = document.createElement('h4');
+    timelineHeading.textContent = 'Status Timeline';
+    timelineSection.appendChild(timelineHeading);
 
     var history = detail.statusHistory || [];
     if (history.length === 0) {
@@ -643,7 +795,9 @@
     if (detail.filePaths && detail.filePaths.length > 0) {
       var filesSection = document.createElement('div');
       filesSection.className = 'detail-files-section';
-      filesSection.innerHTML = '<h4>Objects (' + detail.filePaths.length + ')</h4>';
+      var filesHeading = document.createElement('h4');
+      filesHeading.textContent = 'Objects (' + detail.filePaths.length + ')';
+      filesSection.appendChild(filesHeading);
 
       if (detail.filePaths.length >= 50 && detail.manifestKey) {
         // Large request with manifest — show download link instead of full list
@@ -681,16 +835,26 @@
     if (detail.errorDetails && detail.errorDetails.length > 0) {
       var errSection = document.createElement('div');
       errSection.className = 'detail-errors-section';
-      errSection.innerHTML = '<h4>Errors</h4>';
+      var errHeading = document.createElement('h4');
+      errHeading.textContent = 'Errors';
+      errSection.appendChild(errHeading);
 
       for (var j = 0; j < detail.errorDetails.length; j++) {
         var err = detail.errorDetails[j];
         var errItem = document.createElement('div');
         errItem.className = 'detail-error-item';
-        errItem.innerHTML =
-          '<span class="detail-error-step">' + (err.step || 'Unknown') + '</span>' +
-          '<span class="detail-error-reason">' + (err.reason || 'Unknown error') + '</span>' +
-          '<span class="detail-error-time">' + formatTimestamp(err.timestamp) + '</span>';
+        var errStep = document.createElement('span');
+        errStep.className = 'detail-error-step';
+        errStep.textContent = err.step || 'Unknown';
+        var errReason = document.createElement('span');
+        errReason.className = 'detail-error-reason';
+        errReason.textContent = err.reason || 'Unknown error';
+        var errTime = document.createElement('span');
+        errTime.className = 'detail-error-time';
+        errTime.textContent = formatTimestamp(err.timestamp);
+        errItem.appendChild(errStep);
+        errItem.appendChild(errReason);
+        errItem.appendChild(errTime);
         errSection.appendChild(errItem);
       }
 

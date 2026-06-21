@@ -12,6 +12,14 @@ import * as path from 'path';
 export interface WebUiConstructProps {
   /** Optional API URL to inject into the web UI configuration */
   apiUrl?: string;
+  /** Optional Cognito configuration for the web UI */
+  cognitoConfig?: {
+    userPoolId: string;
+    userPoolClientId: string;
+    cognitoDomain: string;
+    redirectUri: string;
+    logoutUri: string;
+  };
 }
 
 /**
@@ -62,13 +70,28 @@ export class WebUiConstruct extends Construct {
       s3deploy.Source.asset(path.join(__dirname, '../../src/web-ui')),
     ];
 
-    if (props?.apiUrl) {
-      // Strip trailing slash to avoid double-slash when app appends paths
-      const apiUrl = props.apiUrl.replace(/\/+$/, '');
+    if (props?.apiUrl || props?.cognitoConfig) {
+      const configObj: Record<string, unknown> = {};
+
+      if (props?.apiUrl) {
+        // Strip trailing slash to avoid double-slash when app appends paths
+        configObj.apiUrl = props.apiUrl.replace(/\/+$/, '');
+      }
+
+      if (props?.cognitoConfig) {
+        configObj.cognito = {
+          userPoolId: props.cognitoConfig.userPoolId,
+          clientId: props.cognitoConfig.userPoolClientId,
+          domain: props.cognitoConfig.cognitoDomain,
+          redirectUri: props.cognitoConfig.redirectUri,
+          logoutUri: props.cognitoConfig.logoutUri,
+        };
+      }
+
       deploySources.push(
         s3deploy.Source.data(
           'config.js',
-          `window.__CONFIG__ = { apiUrl: "${apiUrl}" };`
+          `window.__CONFIG__ = ${JSON.stringify(configObj, null, 2)};`
         ),
       );
     }

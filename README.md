@@ -6,12 +6,13 @@ An AWS CDK application that orchestrates S3 Glacier restores and DataSync transf
 
 ![Architecture Diagram](docs/glacier-restore-transfer-arch.png)
 
-The stack deploys four main components:
+The stack deploys five main components:
 
 - **Persistence** — DynamoDB table for tracking restore request state with status timeline
 - **Orchestrator** — Durable Lambda function that manages the multi-step restore workflow (detect storage class → initiate restore → monitor restore → start DataSync → monitor DataSync)
-- **API** — REST API Gateway with Lambda integrations for submitting requests and checking status
-- **Web UI** — S3 + CloudFront static site for interacting with the API
+- **Auth** — Amazon Cognito User Pool with hosted UI for user authentication (authorization code grant with PKCE)
+- **API** — REST API Gateway with Lambda integrations and Cognito authorizer for submitting requests and checking status
+- **Web UI** — S3 + CloudFront static site for interacting with the API, with integrated Cognito login flow
 
 ### Orchestrator Workflow
 
@@ -29,7 +30,7 @@ The orchestrator handles each request intelligently:
 - [Node.js](https://nodejs.org/) >= 18.x
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with appropriate credentials
 - [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/cli.html) v2 (`npm install -g aws-cdk`)
-- An AWS account with permissions to create Lambda, API Gateway, DynamoDB, S3, CloudFront, and DataSync resources
+- An AWS account with permissions to create Lambda, API Gateway, DynamoDB, S3, CloudFront, Cognito, and DataSync resources
 - A pre-configured AWS DataSync task (source S3 → destination NFS/S3)
 - An S3 bucket for staging batch operation manifests and DataSync manifests
 - An IAM role for S3 Batch Operations
@@ -105,6 +106,28 @@ cdk deploy RestoreTransferStack
 > **Note:** If you don't already have prerequisite resources (DataSync task, S3 staging bucket, S3 Batch Operations role, DataSync S3 role), you can deploy the `RestoreTransferTestingStack` first — it provisions all of these for you. See [Testing Infrastructure](#testing-infrastructure-optional) below.
 
 The deploy command will output the API endpoint URL and the Web UI CloudFront URL.
+
+### Post-deployment: Create a Cognito user
+
+Self-sign-up is disabled, so you need to create users via the AWS CLI or Console:
+
+```bash
+# Create a user
+aws cognito-idp admin-create-user \
+  --user-pool-id <USER_POOL_ID> \
+  --username user@example.com \
+  --user-attributes Name=email,Value=user@example.com \
+  --temporary-password 'TempPass1!'
+
+# Set a permanent password (skip the force-change-password flow)
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <USER_POOL_ID> \
+  --username user@example.com \
+  --password 'YourSecureP@ss1' \
+  --permanent
+```
+
+The User Pool ID and Client ID are available in the stack outputs (`CognitoUserPoolId` and `CognitoClientId`).
 
 ### Deploy to a specific environment
 
@@ -210,19 +233,37 @@ cdk diff
 
 ### Local UI development
 
-Serve the web UI locally and point it at the deployed API:
+Serve the web UI locally and point it at the deployed API and Cognito:
 
 ```bash
-# Update config with your API URL
+# Build config from stack outputs
 API_URL=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
   --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
-echo "window.__CONFIG__ = { apiUrl: \"${API_URL%/}\" };" > src/web-ui/config.js
+USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
+  --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolId'].OutputValue" --output text)
+CLIENT_ID=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
+  --query "Stacks[0].Outputs[?OutputKey=='CognitoClientId'].OutputValue" --output text)
+WEB_UI_URL=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
+  --query "Stacks[0].Outputs[?OutputKey=='WebUiUrl'].OutputValue" --output text)
+
+cat > src/web-ui/config.js << EOF
+window.__CONFIG__ = {
+  "apiUrl": "${API_URL%/}",
+  "cognito": {
+    "userPoolId": "${USER_POOL_ID}",
+    "clientId": "${CLIENT_ID}",
+    "domain": "https://<your-cognito-domain>.auth.${CDK_DEFAULT_REGION}.amazoncognito.com",
+    "redirectUri": "http://localhost:8080",
+    "logoutUri": "http://localhost:8080"
+  }
+};
+EOF
 
 # Serve locally
 python3 -m http.server 8080 --directory src/web-ui
 ```
 
-Open http://localhost:8080 in your browser.
+> **Note:** For local development, you must add `http://localhost:8080` to the Cognito User Pool Client's allowed callback and logout URLs in the AWS Console (or update the CDK code to include it).
 
 ## Project Structure
 
@@ -231,6 +272,11 @@ Open http://localhost:8080 in your browser.
 ├── lib/
 │   ├── config/             # Environment configuration
 │   ├── constructs/         # CDK construct definitions
+│   │   ├── api-construct.ts            # REST API with Cognito authorizer
+│   │   ├── auth-construct.ts           # Cognito User Pool, Client & Hosted UI
+│   │   ├── orchestrator-construct.ts   # Durable workflow Lambda
+│   │   ├── persistence-construct.ts    # DynamoDB table
+│   │   └── web-ui-construct.ts         # S3 + CloudFront with auth config
 │   ├── restore-transfer-stack.ts       # Main application stack
 │   └── testing-infrastructure-stack.ts # Optional test infrastructure
 ├── scripts/                # Helper scripts (test data upload)
@@ -238,7 +284,7 @@ Open http://localhost:8080 in your browser.
 │   ├── api/                # API Lambda handlers
 │   ├── orchestrator/       # Durable workflow Lambda + steps
 │   ├── shared/             # Shared types, constants, validation
-│   └── web-ui/             # Static web UI assets
+│   └── web-ui/             # Static web UI assets (with Cognito login)
 └── test/                   # Unit tests
 ```
 
