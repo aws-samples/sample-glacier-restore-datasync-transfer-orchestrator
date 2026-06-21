@@ -23,19 +23,60 @@ export function isGlobPattern(filePath: string): boolean {
 }
 
 /**
+ * Validates that a glob pattern contains only safe characters.
+ *
+ * Allows alphanumeric, `/`, `.`, `-`, `_`, `*`, `[`, `]`, `(`, `)`,
+ * and spaces. Rejects patterns that could be used to construct
+ * malicious regexes (e.g., nested quantifiers or backreferences).
+ *
+ * @param pattern - The glob pattern to validate
+ * @throws Error if the pattern contains disallowed characters
+ */
+function validateGlobPattern(pattern: string): void {
+  const allowedChars = /^[a-zA-Z0-9\-_./\* \[\]()]+$/;
+  if (!allowedChars.test(pattern)) {
+    throw new Error(
+      `Invalid glob pattern: contains disallowed characters. Only alphanumeric, -, _, ., /, *, [], (), and space are permitted.`
+    );
+  }
+  if (pattern.length > 1024) {
+    throw new Error(
+      `Invalid glob pattern: exceeds maximum length of 1024 characters.`
+    );
+  }
+}
+
+/**
+ * Pre-compiled regex patterns used by globToRegex for character escaping
+ * and wildcard replacement. Using literals avoids constructing regex from
+ * dynamic input and satisfies static analysis tooling.
+ */
+const GLOB_ESCAPE_PATTERN = /[.+^${}()|[\]\\]/g;
+const GLOB_STAR_PATTERN = /\*/g;
+
+/**
  * Converts a glob pattern into a regex for matching S3 keys.
  *
  * Supports `*` which matches any sequence of characters EXCEPT `/`.
  * Does not support `**` (recursive), `?`, or bracket expressions.
  *
+ * Input is validated against an allowlist of safe characters before
+ * regex construction to prevent ReDoS attacks.
+ *
  * @param pattern - The glob pattern (e.g., "project/renders/*.exr")
  * @returns A RegExp that matches against full S3 object keys
+ * @throws Error if the pattern contains disallowed characters
  */
 export function globToRegex(pattern: string): RegExp {
+  validateGlobPattern(pattern);
   // Escape regex special chars except `*`
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const escaped = pattern.replace(GLOB_ESCAPE_PATTERN, "\\$&");
   // Replace `*` with regex for "anything except /"
-  const regexStr = "^" + escaped.replace(/\*/g, "[^/]*") + "$";
+  const regexStr = "^" + escaped.replace(GLOB_STAR_PATTERN, "[^/]*") + "$";
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
+  // Safe: input is validated by validateGlobPattern() which restricts characters to an allowlist
+  // (alphanumeric, -, _, ., /, *, [], (), space) and enforces a max length. The only dynamic
+  // segments in the resulting regex are literal characters and `[^/]*`, which cannot cause ReDoS.
   return new RegExp(regexStr);
 }
 

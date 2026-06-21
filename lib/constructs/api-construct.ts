@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib/core';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -16,6 +17,8 @@ export interface ApiConstructProps {
   orchestratorFunction: lambda.IFunction;
   /** Staging bucket name for manifest pre-signed URLs */
   stagingBucket?: string;
+  /** Cognito User Pool for API authorization */
+  userPool?: cognito.IUserPool;
 }
 
 /**
@@ -29,6 +32,11 @@ export class ApiConstruct extends Construct {
   constructor(scope: Construct, id: string, props: ApiConstructProps) {
     super(scope, id);
 
+    // Build CORS allowed headers — include Authorization when Cognito is configured
+    const allowHeaders = props.userPool
+      ? ['Content-Type', 'Authorization']
+      : ['Content-Type'];
+
     // Create REST API with CORS enabled
     this.api = new apigateway.RestApi(this, 'RestoreApi', {
       restApiName: 'GlacierRestoreApi',
@@ -36,9 +44,21 @@ export class ApiConstruct extends Construct {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type'],
+        allowHeaders,
       },
     });
+
+    // Create Cognito authorizer if a User Pool is provided
+    let methodOptions: apigateway.MethodOptions | undefined;
+    if (props.userPool) {
+      const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
+        cognitoUserPools: [props.userPool],
+      });
+      methodOptions = {
+        authorizationType: apigateway.AuthorizationType.COGNITO,
+        authorizer,
+      };
+    }
 
     // --- Submit Request Handler (POST /requests) ---
     const submitRequestFn = new nodejs.NodejsFunction(this, 'SubmitRequestFunction', {
@@ -109,20 +129,23 @@ export class ApiConstruct extends Construct {
     // POST /requests
     requestsResource.addMethod(
       'POST',
-      new apigateway.LambdaIntegration(submitRequestFn)
+      new apigateway.LambdaIntegration(submitRequestFn),
+      methodOptions
     );
 
     // GET /requests
     requestsResource.addMethod(
       'GET',
-      new apigateway.LambdaIntegration(getRequestsFn)
+      new apigateway.LambdaIntegration(getRequestsFn),
+      methodOptions
     );
 
     // GET /requests/{requestId}
     const singleRequestResource = requestsResource.addResource('{requestId}');
     singleRequestResource.addMethod(
       'GET',
-      new apigateway.LambdaIntegration(getRequestStatusFn)
+      new apigateway.LambdaIntegration(getRequestStatusFn),
+      methodOptions
     );
 
     // --- Get Manifest URL Handler (GET /requests/{requestId}/manifest) ---
@@ -155,7 +178,8 @@ export class ApiConstruct extends Construct {
       const manifestResource = singleRequestResource.addResource('manifest');
       manifestResource.addMethod(
         'GET',
-        new apigateway.LambdaIntegration(getManifestUrlFn)
+        new apigateway.LambdaIntegration(getManifestUrlFn),
+        methodOptions
       );
     }
   }
