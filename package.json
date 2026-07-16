@@ -5,6 +5,7 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
+    "clean": "find bin lib src test -name '*.js' -not -path '*/web-ui/*' -delete && find bin lib src test -name '*.d.ts' -delete",
     "cdk": "cdk"
   },
   "devDependencies": {
