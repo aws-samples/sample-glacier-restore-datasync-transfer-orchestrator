@@ -349,6 +349,16 @@ body {
   white-space: normal;
 }
 
+.detail-error-reason-summary {
+  color: var(--color-error);
+  font-size: 13px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: #fce8e6;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--color-error);
+}
+
 /* === Empty State === */
 .empty-state {
   text-align: center;

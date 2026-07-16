@@ -35,6 +35,16 @@ export interface RestoreRequest {
   retrievalTier: RetrievalTier;
   /** Number of days the restored object remains in S3 Standard (1-30, default 7) */
   restoreDays: number;
+  /** NFS destination location ARN for DataSync transfer */
+  destinationLocationArn?: string;
+}
+
+/** Represents a DataSync destination available for transfer */
+export interface DataSyncDestination {
+  /** DataSync location ARN */
+  locationArn: string;
+  /** URI of the NFS/location (e.g., nfs://server/path) */
+  locationUri: string;
 }
 
 /** A single entry in the status change timeline */
@@ -66,10 +76,14 @@ export interface RestoreRequestRecord {
   manifestKey?: string;
   /** DataSync task execution ARN */
   dataSyncTaskArn?: string;
+  /** NFS destination location ARN chosen by the user */
+  destinationLocationArn?: string;
   /** Total objects in request */
   objectCount: number;
   /** Objects successfully restored */
   restoredCount: number;
+  /** High-level error reason (displayed in UI for terminal error states) */
+  errorReason?: string;
   /** Per-file error details */
   errorDetails?: ErrorDetail[];
   /** Timeline of status transitions */

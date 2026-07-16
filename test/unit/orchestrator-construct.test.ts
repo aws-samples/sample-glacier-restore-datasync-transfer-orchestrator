@@ -136,6 +136,11 @@ describe('OrchestratorConstruct', () => {
             Action: [
               'datasync:StartTaskExecution',
               'datasync:DescribeTaskExecution',
+              'datasync:ListTasks',
+              'datasync:DescribeTask',
+              'datasync:CreateTask',
+              'datasync:ListLocations',
+              'datasync:CreateLocationS3',
             ],
           }),
         ]),

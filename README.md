@@ -54,18 +54,20 @@ The stack uses environment variables to configure deployment. Set these before d
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `ENV` | Target environment (`dev` or `prod`). Defaults to `dev`. | No |
-| `DATASYNC_TASK_ARN` | ARN of the pre-configured DataSync task | Yes |
+| `DATASYNC_TASK_ARN` | Default/fallback DataSync task ARN, used when a request does not specify a destination | No |
 | `STAGING_BUCKET` | S3 bucket name for batch and DataSync manifests | Yes |
 | `CDK_DEFAULT_ACCOUNT` | AWS account ID for deployment | Yes |
 | `CDK_DEFAULT_REGION` | AWS region for deployment | Yes |
 | `BATCH_ROLE_ARN` | IAM role ARN for S3 Batch Operations | Yes |
-| `DATASYNC_S3_ROLE_ARN` | IAM role ARN for DataSync to access S3 (source + manifests) | Yes |
+| `DATASYNC_S3_ROLE_ARN` | IAM role ARN for DataSync to access S3 (source + manifests); also used to create new DataSync tasks/locations dynamically | Yes |
+
+> **Note on DataSync task resolution:** When a user selects a destination in the UI (via the `/datasync-destinations` endpoint), the orchestrator dynamically finds or creates a DataSync task matching the source bucket and chosen NFS destination. `DATASYNC_TASK_ARN` is only used as a fallback when no destination is specified in the request.
 
 Example:
 
 ```bash
 export ENV=dev
-export DATASYNC_TASK_ARN=arn:aws:datasync:us-west-2:123456789012:task/task-abc123
+export DATASYNC_TASK_ARN=arn:aws:datasync:us-west-2:123456789012:task/task-abc123  # optional fallback
 export STAGING_BUCKET=my-staging-bucket
 export CDK_DEFAULT_ACCOUNT=123456789012
 export CDK_DEFAULT_REGION=us-west-2

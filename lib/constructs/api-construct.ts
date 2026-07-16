@@ -95,6 +95,28 @@ export class ApiConstruct extends Construct {
       },
     });
 
+    // --- Get DataSync Destinations Handler (GET /datasync-destinations) ---
+    const getDataSyncDestinationsFn = new nodejs.NodejsFunction(this, 'GetDataSyncDestinationsFunction', {
+      entry: 'src/api/get-datasync-destinations.ts',
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(30),
+      environment: {},
+      bundling: {
+        minify: true,
+        sourceMap: true,
+        forceDockerBundling: false,
+      },
+    });
+
+    // DataSync ListLocations permission for destinations handler
+    getDataSyncDestinationsFn.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['datasync:ListLocations'],
+      resources: ['*'],
+    }));
+
     // --- Get Request Status Handler (GET /requests/{requestId}) ---
     const getRequestStatusFn = new nodejs.NodejsFunction(this, 'GetRequestStatusFunction', {
       entry: 'src/api/get-request-status.ts',
@@ -137,6 +159,14 @@ export class ApiConstruct extends Construct {
     requestsResource.addMethod(
       'GET',
       new apigateway.LambdaIntegration(getRequestsFn),
+      methodOptions
+    );
+
+    // GET /datasync-destinations
+    const dataSyncDestinationsResource = this.api.root.addResource('datasync-destinations');
+    dataSyncDestinationsResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(getDataSyncDestinationsFn),
       methodOptions
     );
 

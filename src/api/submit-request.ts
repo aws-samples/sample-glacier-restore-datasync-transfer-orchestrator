@@ -64,12 +64,28 @@ export async function handler(
     };
   }
 
+  // Validate destinationLocationArn if provided
+  const destinationLocationArn = typeof input.destinationLocationArn === "string"
+    ? input.destinationLocationArn.trim()
+    : undefined;
+
+  if (destinationLocationArn && !destinationLocationArn.startsWith("arn:aws:datasync:")) {
+    return {
+      statusCode: 400,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        errors: [{ field: "destinationLocationArn", message: "Invalid DataSync location ARN" }],
+      }),
+    };
+  }
+
   // Build the validated restore request using deduplicated paths
   const restoreRequest = {
     bucket: input.bucket as string,
     filePaths: validationResult.deduplicatedPaths!,
     retrievalTier: input.retrievalTier as string,
     restoreDays: validationResult.restoreDays!,
+    destinationLocationArn,
   };
 
   // Create the request record in DynamoDB
@@ -80,6 +96,7 @@ export async function handler(
       filePaths: restoreRequest.filePaths,
       retrievalTier: restoreRequest.retrievalTier as "Expedited" | "Standard" | "Bulk",
       restoreDays: restoreRequest.restoreDays,
+      destinationLocationArn: restoreRequest.destinationLocationArn,
     });
   } catch (err) {
     return {
@@ -116,6 +133,7 @@ export async function handler(
             filePaths: record.filePaths,
             retrievalTier: record.retrievalTier,
             restoreDays: record.restoreDays,
+            destinationLocationArn: record.destinationLocationArn,
           })
         ),
       })

@@ -125,6 +125,46 @@ describe("status update helpers", () => {
       const record = await createRequestRecord(request);
       expect(record.restoreDays).toBe(21);
     });
+
+    it("persists destinationLocationArn when provided", async () => {
+      ddbMock.on(PutCommand).resolves({});
+
+      const request: RestoreRequest = {
+        bucket: "bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        destinationLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-nfs123",
+      };
+
+      const record = await createRequestRecord(request);
+      expect(record.destinationLocationArn).toBe(
+        "arn:aws:datasync:us-east-1:123456789012:location/loc-nfs123"
+      );
+
+      const calls = ddbMock.commandCalls(PutCommand);
+      expect(calls[0].args[0].input.Item).toHaveProperty(
+        "destinationLocationArn",
+        "arn:aws:datasync:us-east-1:123456789012:location/loc-nfs123"
+      );
+    });
+
+    it("omits destinationLocationArn from record when not provided", async () => {
+      ddbMock.on(PutCommand).resolves({});
+
+      const request: RestoreRequest = {
+        bucket: "bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+      };
+
+      const record = await createRequestRecord(request);
+      expect(record.destinationLocationArn).toBeUndefined();
+
+      const calls = ddbMock.commandCalls(PutCommand);
+      expect(calls[0].args[0].input.Item).not.toHaveProperty("destinationLocationArn");
+    });
   });
 
   describe("updateRequestStatus", () => {

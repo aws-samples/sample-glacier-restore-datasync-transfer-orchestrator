@@ -181,6 +181,95 @@ describe("POST /requests handler", () => {
       );
       expect(payload.restoreDays).toBe(7);
     });
+
+    it("passes destinationLocationArn to DynamoDB record and orchestrator payload", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        destinationLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-nfs1",
+      });
+
+      await handler(event);
+
+      // Verify DynamoDB record includes destinationLocationArn
+      const ddbCalls = ddbMock.commandCalls(PutCommand);
+      expect(ddbCalls[0].args[0].input.Item).toHaveProperty(
+        "destinationLocationArn",
+        "arn:aws:datasync:us-east-1:123456789012:location/loc-nfs1"
+      );
+
+      // Verify orchestrator payload includes destinationLocationArn
+      const lambdaCalls = lambdaMock.commandCalls(InvokeCommand);
+      const payload = JSON.parse(
+        Buffer.from(lambdaCalls[0].args[0].input.Payload as Uint8Array).toString("utf-8")
+      );
+      expect(payload.destinationLocationArn).toBe(
+        "arn:aws:datasync:us-east-1:123456789012:location/loc-nfs1"
+      );
+    });
+
+    it("handles submission without destinationLocationArn (backwards compatible)", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(202);
+
+      // Orchestrator payload should have undefined destinationLocationArn
+      const lambdaCalls = lambdaMock.commandCalls(InvokeCommand);
+      const payload = JSON.parse(
+        Buffer.from(lambdaCalls[0].args[0].input.Payload as Uint8Array).toString("utf-8")
+      );
+      expect(payload.destinationLocationArn).toBeUndefined();
+    });
+  });
+
+  describe("destinationLocationArn validation", () => {
+    it("returns 400 when destinationLocationArn is not a valid DataSync ARN", async () => {
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        destinationLocationArn: "not-a-valid-arn",
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body);
+      expect(body.errors.some((e: { field: string }) => e.field === "destinationLocationArn")).toBe(true);
+    });
+
+    it("accepts valid DataSync location ARN", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        destinationLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-abc123",
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(202);
+    });
   });
 
   describe("validation errors", () => {

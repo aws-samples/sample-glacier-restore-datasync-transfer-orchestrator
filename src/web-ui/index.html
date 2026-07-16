@@ -90,6 +90,15 @@
           <span id="restore-days-error" class="form-error" role="alert" aria-live="polite"></span>
         </div>
 
+        <div class="form-group">
+          <label for="destination-select">Transfer Destination</label>
+          <select id="destination-select" name="destinationLocationArn" aria-describedby="destination-help">
+            <option value="">Loading destinations…</option>
+          </select>
+          <small id="destination-help" class="form-help">NFS destination for the DataSync transfer. Choose where restored files should be sent.</small>
+          <span id="destination-error" class="form-error" role="alert" aria-live="polite"></span>
+        </div>
+
         <div class="form-actions">
           <button type="submit" id="submit-btn" class="btn btn-primary">Submit Restore Request</button>
         </div>

@@ -122,7 +122,10 @@ export class TestingInfrastructureStack extends cdk.Stack {
       'dnf install -y nfs-utils',
       'mkdir -p /data/datasync-destination',
       'chmod 777 /data/datasync-destination',
+      'mkdir -p /data/datasync-destination-2',
+      'chmod 777 /data/datasync-destination-2',
       'echo "/data/datasync-destination *(rw,sync,no_subtree_check,no_root_squash)" >> /etc/exports',
+      'echo "/data/datasync-destination-2 *(rw,sync,no_subtree_check,no_root_squash)" >> /etc/exports',
       'systemctl enable nfs-server',
       'systemctl start nfs-server',
       'exportfs -arv',
@@ -251,6 +254,16 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
     nfsLocation.cfnOptions.condition = hasActivationKey;
 
+    // Second NFS location — different export path for testing destination selection
+    const nfsLocation2 = new datasync.CfnLocationNFS(this, 'NfsLocation2', {
+      serverHostname: nfsInstance.instancePrivateIp,
+      subdirectory: '/data/datasync-destination-2',
+      onPremConfig: {
+        agentArns: [agent.attrAgentArn],
+      },
+    });
+    nfsLocation2.cfnOptions.condition = hasActivationKey;
+
     // ─── DataSync Task (conditional) ───────────────────────────────────
     const taskLogGroup = new logs.LogGroup(this, 'DataSyncTaskLogGroup', {
       logGroupName: `/aws/datasync/RestoreTransferTestTask`,
@@ -355,6 +368,18 @@ export class TestingInfrastructureStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'NfsServerPrivateIp', {
       value: nfsInstance.instancePrivateIp,
       description: 'NFS server private IP',
+    });
+
+    new cdk.CfnOutput(this, 'NfsLocation1Arn', {
+      value: nfsLocation.attrLocationArn,
+      description: 'DataSync NFS location ARN — /data/datasync-destination',
+      condition: hasActivationKey,
+    });
+
+    new cdk.CfnOutput(this, 'NfsLocation2Arn', {
+      value: nfsLocation2.attrLocationArn,
+      description: 'DataSync NFS location ARN — /data/datasync-destination-2',
+      condition: hasActivationKey,
     });
 
     new cdk.CfnOutput(this, 'DataSyncAgentPublicIp', {

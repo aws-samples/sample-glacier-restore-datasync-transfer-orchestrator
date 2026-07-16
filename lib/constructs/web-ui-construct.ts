@@ -101,6 +101,10 @@ export class WebUiConstruct extends Construct {
       destinationBucket: websiteBucket,
       distribution: this.distribution,
       distributionPaths: ['/*'],
+      cacheControl: [
+        s3deploy.CacheControl.setPublic(),
+        s3deploy.CacheControl.maxAge(cdk.Duration.minutes(5)),
+      ],
     });
 
     // Output the CloudFront URL
