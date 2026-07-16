@@ -133,8 +133,13 @@ export class OrchestratorConstruct extends Construct {
         actions: [
           'datasync:StartTaskExecution',
           'datasync:DescribeTaskExecution',
+          'datasync:ListTasks',
+          'datasync:DescribeTask',
+          'datasync:CreateTask',
+          'datasync:ListLocations',
+          'datasync:CreateLocationS3',
         ],
-        resources: [props.dataSyncTaskArn, `${props.dataSyncTaskArn}/execution/*`],
+        resources: ['*'],
       })
     );
 

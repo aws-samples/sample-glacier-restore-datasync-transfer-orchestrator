@@ -56,6 +56,7 @@ import {
   updateRequestStatus,
   markComplete,
 } from "./utils/status";
+import { resolveDataSyncTask } from "./utils/resolve-datasync-task";
 
 /** Environment variable accessors */
 const getDataSyncTaskArn = () => process.env.DATASYNC_TASK_ARN ?? "";
@@ -152,6 +153,8 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
   const hasGlobs = event.filePaths.some(isGlobPattern);
   let resolvedFilePaths: string[];
 
+  try {
+
   if (hasGlobs) {
     await context.step("update-status-resolving-paths", async () => {
       await updateRequestStatus(requestId, submittedAt, "Resolving Paths");
@@ -168,6 +171,18 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
         objectCount: resolvedFilePaths.length,
       });
     });
+
+    // Early exit if no files matched the glob patterns
+    if (resolvedFilePaths.length === 0) {
+      const errorReason = `No objects found matching pattern(s): ${event.filePaths.join(", ")}`;
+      await context.step("mark-error-no-files", async () => {
+        await updateRequestStatus(requestId, submittedAt, "Error", {
+          errorReason,
+        });
+        await markComplete(requestId, submittedAt, "Error");
+      });
+      return { requestId, status: "Error", errorReason };
+    }
   } else {
     resolvedFilePaths = event.filePaths;
   }
@@ -273,6 +288,9 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
 
         // Handle batch timeout
         if (batchFinalState.timedOut) {
+          await updateRequestStatus(requestId, submittedAt, "Restore Timed Out", {
+            errorReason: "S3 Batch Operations restore job did not complete within the timeout period",
+          });
           await markComplete(requestId, submittedAt, "Restore Timed Out");
           return { requestId, status: "Restore Timed Out" };
         }
@@ -350,6 +368,10 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
 
     // Handle restore timeout
     if (restoreFinalState.timedOut && restoreFinalState.pendingFiles.length > 0) {
+      const pendingCount = restoreFinalState.pendingFiles.length;
+      await updateRequestStatus(requestId, submittedAt, "Restore Timed Out", {
+        errorReason: `Glacier restore timed out with ${pendingCount} object${pendingCount > 1 ? "s" : ""} still pending`,
+      });
       await markComplete(requestId, submittedAt, "Restore Timed Out");
       return { requestId, status: "Restore Timed Out" };
     }
@@ -376,9 +398,21 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
     await updateRequestStatus(requestId, submittedAt, "Starting DataSync");
   });
 
+  // Resolve the DataSync task ARN: use user-chosen destination or fall back to default
+  const resolvedTaskArn = await context.step("resolve-datasync-task", async () => {
+    if (event.destinationLocationArn) {
+      return await resolveDataSyncTask({
+        sourceBucket: event.bucket,
+        destinationLocationArn: event.destinationLocationArn,
+        dataSyncS3RoleArn: getDataSyncS3RoleArn(),
+      });
+    }
+    return getDataSyncTaskArn();
+  });
+
   const taskExecutionArn = await context.step("start-datasync", async () => {
     return await startDataSyncTransfer({
-      taskArn: getDataSyncTaskArn(),
+      taskArn: resolvedTaskArn,
       stagingBucket: getStagingBucket(),
       filePaths: resolvedFilePaths,
       manifestAccessRoleArn: getDataSyncS3RoleArn(),
@@ -441,24 +475,43 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
 
   // Step 6: Mark complete based on DataSync outcome
   let finalStatus: "Transfer Complete" | "DataSync Failed" | "Transfer Timed Out" | "Transfer Status Unknown";
+  let errorReason: string | undefined;
 
   if (dataSyncFinalState.status === "SUCCESS") {
     finalStatus = "Transfer Complete";
   } else if (dataSyncFinalState.status === "ERROR") {
     finalStatus = "DataSync Failed";
+    errorReason = "DataSync task execution reported an error";
   } else if (dataSyncFinalState.timedOut) {
     finalStatus = "Transfer Timed Out";
+    errorReason = "DataSync transfer did not complete within the timeout period";
   } else if (dataSyncFinalState.consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
     finalStatus = "Transfer Status Unknown";
+    errorReason = dataSyncFinalState.failureReason ?? "Multiple consecutive polling failures";
   } else {
     finalStatus = "Transfer Timed Out";
+    errorReason = "DataSync transfer did not complete within the timeout period";
   }
 
   await context.step("mark-complete", async () => {
+    if (errorReason) {
+      await updateRequestStatus(requestId, submittedAt, finalStatus, { errorReason });
+    }
     await markComplete(requestId, submittedAt, finalStatus);
   });
 
   return { requestId, status: finalStatus };
+
+  } catch (error: unknown) {
+    const errorReason = error instanceof Error ? error.message : "An unexpected error occurred";
+    await context.step("mark-error-unexpected", async () => {
+      await updateRequestStatus(requestId, submittedAt, "Error", {
+        errorReason,
+      });
+      await markComplete(requestId, submittedAt, "Error");
+    });
+    return { requestId, status: "Error", errorReason };
+  }
 };
 
 /**

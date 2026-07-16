@@ -38,7 +38,7 @@ describe('ApiConstruct', () => {
   });
 
   test('creates three Lambda functions with Node.js 20.x runtime', () => {
-    template.resourceCountIs('AWS::Lambda::Function', 4); // 3 API handlers + 1 orchestrator mock
+    template.resourceCountIs('AWS::Lambda::Function', 5); // 4 API handlers + 1 orchestrator mock
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs20.x',
       MemorySize: 256,
@@ -47,13 +47,13 @@ describe('ApiConstruct', () => {
   });
 
   test('configures 256 MB memory for API handlers', () => {
-    // All three API handler functions should have 256 MB
+    // All four API handler functions should have 256 MB
     const functions = template.findResources('AWS::Lambda::Function', {
       Properties: {
         MemorySize: 256,
       },
     });
-    expect(Object.keys(functions).length).toBe(3);
+    expect(Object.keys(functions).length).toBe(4);
   });
 
   test('configures 30 second timeout for API handlers', () => {
@@ -62,20 +62,24 @@ describe('ApiConstruct', () => {
         Timeout: 30,
       },
     });
-    expect(Object.keys(functions).length).toBe(3);
+    expect(Object.keys(functions).length).toBe(4);
   });
 
-  test('sets TABLE_NAME environment variable on all API handlers', () => {
+  test('sets TABLE_NAME environment variable on request handlers', () => {
     const functions = template.findResources('AWS::Lambda::Function', {
       Properties: {
         MemorySize: 256,
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({
+            TABLE_NAME: Match.anyValue(),
+          }),
+        }),
       },
     });
 
-    for (const logicalId of Object.keys(functions)) {
-      const envVars = functions[logicalId].Properties.Environment.Variables;
-      expect(envVars).toHaveProperty('TABLE_NAME');
-    }
+    // 3 request handlers have TABLE_NAME (submit, get-requests, get-request-status)
+    // The datasync-destinations handler does not
+    expect(Object.keys(functions).length).toBe(3);
   });
 
   test('sets ORCHESTRATOR_FUNCTION_NAME on submit handler', () => {

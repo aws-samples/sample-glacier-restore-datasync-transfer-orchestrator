@@ -59,6 +59,7 @@ export async function createRequestRecord(
     restoredCount: 0,
     statusHistory: [{ status: "Submitted", timestamp: now }],
     ttl: Math.floor(Date.now() / 1000) + TTL_SECONDS,
+    ...(request.destinationLocationArn && { destinationLocationArn: request.destinationLocationArn }),
   };
 
   await docClient.send(

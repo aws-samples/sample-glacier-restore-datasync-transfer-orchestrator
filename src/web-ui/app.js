@@ -39,6 +39,8 @@
   const connectivityWarning = document.getElementById('connectivity-warning');
   const restoreDaysInput = document.getElementById('restore-days-input');
   const restoreDaysError = document.getElementById('restore-days-error');
+  const destinationSelect = document.getElementById('destination-select');
+  const destinationError = document.getElementById('destination-error');
   const statusFilter = document.getElementById('status-filter');
   const requestsTbody = document.getElementById('requests-tbody');
   const dashboardEmpty = document.getElementById('dashboard-empty');
@@ -131,10 +133,12 @@
     filePathsError.textContent = '';
     tierError.textContent = '';
     restoreDaysError.textContent = '';
+    destinationError.textContent = '';
     bucketInput.classList.remove('invalid');
     filePathsInput.classList.remove('invalid');
     tierSelect.classList.remove('invalid');
     restoreDaysInput.classList.remove('invalid');
+    destinationSelect.classList.remove('invalid');
     formErrorGlobal.hidden = true;
     formSuccess.hidden = true;
   }
@@ -190,6 +194,13 @@
     if (isNaN(restoreDays) || restoreDays < 1 || restoreDays > 30) {
       restoreDaysError.textContent = 'Restore duration must be between 1 and 30 days.';
       restoreDaysInput.classList.add('invalid');
+      valid = false;
+    }
+
+    var destination = destinationSelect.value;
+    if (!destination) {
+      destinationError.textContent = 'Please select a transfer destination.';
+      destinationSelect.classList.add('invalid');
       valid = false;
     }
 
@@ -272,7 +283,7 @@
   /**
    * Submit a restore request to the API.
    */
-  async function submitRequest(bucket, filePaths, retrievalTier, restoreDays) {
+  async function submitRequest(bucket, filePaths, retrievalTier, restoreDays, destinationLocationArn) {
     var token = await window.getIdToken();
     var headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -280,7 +291,7 @@
     const response = await fetch(API_BASE_URL + '/requests', {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays }),
+      body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays, destinationLocationArn: destinationLocationArn }),
     });
 
     if (response.status === 401) {
@@ -291,7 +302,7 @@
         return fetch(API_BASE_URL + '/requests', {
           method: 'POST',
           headers: retryHeaders,
-          body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays }),
+          body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays, destinationLocationArn: destinationLocationArn }),
         });
       });
       if (!retryResponse) return; // redirected to login
@@ -397,19 +408,24 @@
     const filePaths = parsePaths(filePathsInput.value.trim());
     const retrievalTier = tierSelect.value;
     const restoreDays = parseInt(restoreDaysInput.value, 10);
+    const destinationLocationArn = destinationSelect.value;
 
     submitBtn.disabled = true;
     submitBtn.textContent = 'Submitting…';
     clearErrors();
 
     try {
-      const result = await submitRequest(bucket, filePaths, retrievalTier, restoreDays);
+      const result = await submitRequest(bucket, filePaths, retrievalTier, restoreDays, destinationLocationArn);
       formSuccess.textContent = 'Request submitted successfully. Request ID: ' + (result.requestId || 'N/A');
       formSuccess.hidden = false;
       form.reset();
       tierSelect.value = 'Standard';
       restoreDaysInput.value = '7';
       resetTierConstraints();
+      // Restore the destination select to its current selection (don't reset it)
+      if (destinationSelect.options.length > 0) {
+        destinationSelect.selectedIndex = 0;
+      }
       // Refresh the dashboard immediately
       await refreshDashboard();
     } catch (err) {
@@ -461,22 +477,13 @@
       badge.className = 'status-badge ' + getStatusBadgeClass(req.status);
       badge.textContent = req.status || 'Unknown';
       tdStatus.appendChild(badge);
-
-      // Error details
-      if (ERROR_STATUSES.includes(req.status) && req.errorDetails && req.errorDetails.length > 0) {
-        var errorDiv = document.createElement('div');
-        errorDiv.className = 'error-details';
-        var lastError = req.errorDetails[req.errorDetails.length - 1];
-        errorDiv.textContent = (lastError.step || 'Unknown step') + ': ' + (lastError.reason || 'Unknown error');
-        tdStatus.appendChild(errorDiv);
-      }
       row.appendChild(tdStatus);
 
       // Objects
       var tdObjects = document.createElement('td');
       var restored = req.restoredCount || 0;
       var total = req.objectCount || 0;
-      if (total === 0 && req.status !== 'Transfer Complete') {
+      if (total === 0 && !ERROR_STATUSES.includes(req.status) && req.status !== 'Transfer Complete') {
         tdObjects.textContent = 'Resolving…';
       } else {
         tdObjects.textContent = restored + '/' + total;
@@ -577,6 +584,70 @@
     connectivityWarningVisible = false;
   }
 
+  // --- DataSync Destinations ---
+
+  /**
+   * Fetch available DataSync NFS destinations from the API and populate the select dropdown.
+   */
+  async function fetchDestinations() {
+    try {
+      var token = await window.getIdToken();
+      var headers = {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+
+      var response = await fetch(API_BASE_URL + '/datasync-destinations', { headers: headers });
+
+      if (response.status === 401) {
+        var retryResponse = await handleUnauthorized(async function () {
+          var newToken = await window.getIdToken();
+          var retryHeaders = {};
+          if (newToken) retryHeaders['Authorization'] = 'Bearer ' + newToken;
+          return fetch(API_BASE_URL + '/datasync-destinations', { headers: retryHeaders });
+        });
+        if (!retryResponse) return;
+        if (!retryResponse.ok) throw new Error('Failed to fetch destinations');
+        var retryData = await retryResponse.json();
+        populateDestinations(retryData.destinations || []);
+        return;
+      }
+
+      if (!response.ok) throw new Error('Failed to fetch destinations');
+      var data = await response.json();
+      populateDestinations(data.destinations || []);
+    } catch (err) {
+      console.error('[fetchDestinations]', err.message);
+      destinationSelect.innerHTML = '';
+      var errorOpt = document.createElement('option');
+      errorOpt.value = '';
+      errorOpt.textContent = 'Failed to load destinations';
+      destinationSelect.appendChild(errorOpt);
+    }
+  }
+
+  /**
+   * Populate the destination dropdown with options.
+   */
+  function populateDestinations(destinations) {
+    destinationSelect.innerHTML = '';
+
+    if (destinations.length === 0) {
+      var emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = 'No destinations available';
+      destinationSelect.appendChild(emptyOpt);
+      return;
+    }
+
+    for (var i = 0; i < destinations.length; i++) {
+      var dest = destinations[i];
+      var opt = document.createElement('option');
+      opt.value = dest.locationArn;
+      // Display the location URI (e.g., nfs://server/export/path)
+      opt.textContent = dest.locationUri;
+      destinationSelect.appendChild(opt);
+    }
+  }
+
   // --- Initialization ---
 
   async function init() {
@@ -596,6 +667,9 @@
     // Wire logout button
     var logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.addEventListener('click', window.logout);
+
+    // Load available DataSync destinations
+    await fetchDestinations();
 
     // Form submission
     form.addEventListener('submit', handleSubmit);
@@ -720,6 +794,7 @@
     summary.appendChild(createDetailFieldWithBadge('Status', detail.status || 'Unknown', getStatusBadgeClass(detail.status)));
     summary.appendChild(createDetailField('Retrieval Tier', detail.retrievalTier || '—'));
     summary.appendChild(createDetailField('Restore Duration', detail.restoreDays ? detail.restoreDays + ' days' : '—'));
+    summary.appendChild(createDetailField('Destination', detail.destinationLocationArn || 'Default'));
     summary.appendChild(createDetailField('Objects', (detail.restoredCount || 0) + ' / ' + (detail.objectCount || 0)));
     summary.appendChild(createDetailField('Submitted', formatTimestamp(detail.submittedAt)));
     if (detail.restoreExpiresAt) {
@@ -831,12 +906,37 @@
       panel.appendChild(filesSection);
     }
 
-    // Error details
+    // Error reason (high-level)
+    if (detail.errorReason) {
+      var reasonSection = document.createElement('div');
+      reasonSection.className = 'detail-errors-section';
+      var reasonHeading = document.createElement('h4');
+      reasonHeading.textContent = 'Error';
+      reasonSection.appendChild(reasonHeading);
+      var reasonText = document.createElement('p');
+      reasonText.className = 'detail-error-reason-summary';
+      reasonText.textContent = detail.errorReason;
+      reasonSection.appendChild(reasonText);
+      panel.appendChild(reasonSection);
+    } else if (ERROR_STATUSES.includes(detail.status) && detail.objectCount === 0 && (!detail.errorDetails || detail.errorDetails.length === 0)) {
+      var reasonSection = document.createElement('div');
+      reasonSection.className = 'detail-errors-section';
+      var reasonHeading = document.createElement('h4');
+      reasonHeading.textContent = 'Error';
+      reasonSection.appendChild(reasonHeading);
+      var reasonText = document.createElement('p');
+      reasonText.className = 'detail-error-reason-summary';
+      reasonText.textContent = 'No objects found matching the specified paths';
+      reasonSection.appendChild(reasonText);
+      panel.appendChild(reasonSection);
+    }
+
+    // Per-file error details
     if (detail.errorDetails && detail.errorDetails.length > 0) {
       var errSection = document.createElement('div');
       errSection.className = 'detail-errors-section';
       var errHeading = document.createElement('h4');
-      errHeading.textContent = 'Errors';
+      errHeading.textContent = 'Error Details';
       errSection.appendChild(errHeading);
 
       for (var j = 0; j < detail.errorDetails.length; j++) {
