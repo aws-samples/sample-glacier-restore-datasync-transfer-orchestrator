@@ -15,6 +15,7 @@
     "@types/node": "^24.10.1",
     "aws-cdk": "2.1124.1",
     "aws-sdk-client-mock": "^4.1.0",
+    "cdk-nag": "^3.0.1",
     "esbuild": "^0.28.0",
     "fast-check": "^3.22.0",
     "jest": "^30",

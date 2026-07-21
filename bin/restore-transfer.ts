@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
+import { AwsSolutionsChecks } from 'cdk-nag';
 import { RestoreTransferStack } from '../lib/restore-transfer-stack';
 import { TestingInfrastructureStack } from '../lib/testing-infrastructure-stack';
 
 const app = new cdk.App();
+new AwsSolutionsChecks(app, { verbose: true });
 
 // Main application stack
 new RestoreTransferStack(app, 'RestoreTransferStack', {
