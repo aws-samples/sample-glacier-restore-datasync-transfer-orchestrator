@@ -1,6 +1,8 @@
-# Restore and Transfer Orchestrator
+# Restore and transfer orchestrator
 
 An AWS CDK application that orchestrates S3 Glacier restores and DataSync transfers. It provides a REST API and web UI for submitting restore requests, tracking their status, and automatically syncing specific restored objects to an on-premises NFS destination via AWS DataSync.
+
+> **⚠️ Non-production sample:** This project is intended as an internal tool and reference architecture. It contains deliberate simplifications (e.g., wildcard S3 IAM permissions, predictable fallback resource names) that must be hardened before production use. See [SECURITY.md](SECURITY.md) for details and hardening recommendations.
 
 ## Architecture
 
@@ -14,7 +16,7 @@ The stack deploys five main components:
 - **API** — REST API Gateway with Lambda integrations and Cognito authorizer for submitting requests and checking status
 - **Web UI** — S3 + CloudFront static site for interacting with the API, with integrated Cognito login flow
 
-### Orchestrator Workflow
+### Orchestrator workflow
 
 The orchestrator handles each request intelligently:
 
@@ -109,7 +111,7 @@ cdk deploy RestoreTransferStack
 
 The deploy command will output the API endpoint URL and the Web UI CloudFront URL.
 
-### Post-deployment: Create a Cognito user
+### Post-deployment: create a Cognito user
 
 Self-sign-up is disabled, so you need to create users via the AWS CLI or Console:
 
@@ -138,7 +140,7 @@ The User Pool ID and Client ID are available in the stack outputs (`CognitoUserP
 ENV=prod cdk deploy RestoreTransferStack
 ```
 
-## Testing Infrastructure (Optional)
+## Testing infrastructure (optional)
 
 An optional `RestoreTransferTestingStack` provisions all prerequisite resources for dev/test:
 
@@ -267,7 +269,7 @@ python3 -m http.server 8080 --directory src/web-ui
 
 > **Note:** For local development, you must add `http://localhost:8080` to the Cognito User Pool Client's allowed callback and logout URLs in the AWS Console (or update the CDK code to include it).
 
-## Project Structure
+## Project structure
 
 ```
 ├── bin/                    # CDK app entry point
@@ -290,7 +292,7 @@ python3 -m http.server 8080 --directory src/web-ui
 └── test/                   # Unit tests
 ```
 
-## Useful Commands
+## Useful commands
 
 | Command | Description |
 |---------|-------------|
@@ -317,7 +319,13 @@ Note: Destroy the main stack first, then the testing stack. The testing stack in
 
 ## Security
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+This project has documented security trade-offs and production hardening recommendations. See [SECURITY.md](SECURITY.md) for:
+
+- Known IAM permission scoping decisions and how to tighten them
+- Predictable resource name risks and mitigations
+- WAF and other defense-in-depth recommendations
+
+To report a security issue, see [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications).
 
 ## License
 
