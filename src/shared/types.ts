@@ -33,7 +33,7 @@ export interface RestoreRequest {
   filePaths: string[];
   /** Speed tier for Glacier retrieval */
   retrievalTier: RetrievalTier;
-  /** Number of days the restored object remains in S3 Standard (1-30, default 7) */
+  /** Number of days the restored object remains in S3 Standard (minimum 1, default 7) */
   restoreDays: number;
   /** NFS destination location ARN for DataSync transfer */
   destinationLocationArn?: string;

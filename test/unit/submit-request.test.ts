@@ -344,7 +344,7 @@ describe("POST /requests handler", () => {
       expect(body.errors.some((e: { field: string }) => e.field === "restoreDays")).toBe(true);
     });
 
-    it("returns 400 when restoreDays exceeds maximum", async () => {
+    it("accepts restoreDays above 30 (no upper bound)", async () => {
       const event = makeEvent({
         bucket: "my-bucket",
         filePaths: ["file.dat"],
@@ -354,9 +354,7 @@ describe("POST /requests handler", () => {
 
       const result = await handler(event);
 
-      expect(result.statusCode).toBe(400);
-      const body = JSON.parse(result.body);
-      expect(body.errors.some((e: { field: string }) => e.field === "restoreDays")).toBe(true);
+      expect(result.statusCode).toBe(202);
     });
 
     it("returns 400 with multiple errors when multiple fields are invalid", async () => {

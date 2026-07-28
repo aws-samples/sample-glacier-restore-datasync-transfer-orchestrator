@@ -12,7 +12,6 @@ import {
   MAX_FILE_PATHS,
   VALID_RETRIEVAL_TIERS,
   MIN_RESTORE_DAYS,
-  MAX_RESTORE_DAYS,
   RESTORE_DURATION_DAYS,
 } from "./constants";
 
@@ -83,10 +82,10 @@ export function validateRestoreDays(days: unknown): { value: number; errors: Val
 
   const numDays = typeof days === "string" ? parseInt(days, 10) : Number(days);
 
-  if (!Number.isInteger(numDays) || numDays < MIN_RESTORE_DAYS || numDays > MAX_RESTORE_DAYS) {
+  if (!Number.isInteger(numDays) || numDays < MIN_RESTORE_DAYS) {
     errors.push({
       field: "restoreDays",
-      message: `Restore days must be an integer between ${MIN_RESTORE_DAYS} and ${MAX_RESTORE_DAYS}`,
+      message: `Restore days must be a positive integer (minimum ${MIN_RESTORE_DAYS})`,
     });
     return { value: RESTORE_DURATION_DAYS, errors };
   }

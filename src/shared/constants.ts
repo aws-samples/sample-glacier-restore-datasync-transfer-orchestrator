@@ -16,8 +16,8 @@ export const RESTORE_DURATION_DAYS = 7;
 /** Minimum allowed restore duration in days */
 export const MIN_RESTORE_DAYS = 1;
 
-/** Maximum allowed restore duration in days */
-export const MAX_RESTORE_DAYS = 30;
+/** Maximum allowed restore duration in days (no hard upper bound; set high for safety) */
+export const MAX_RESTORE_DAYS = Infinity;
 
 /** DynamoDB TTL: 30 days after completion (in seconds) */
 export const TTL_DAYS = 30;

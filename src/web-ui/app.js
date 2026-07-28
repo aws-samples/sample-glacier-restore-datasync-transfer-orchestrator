@@ -22,6 +22,7 @@
   let elapsedTimeTimer = null;
   let lastSuccessfulFetch = Date.now();
   let connectivityWarningVisible = false;
+  let destinationsMap = {}; // locationArn → locationUri lookup
 
   // --- DOM References ---
   const form = document.getElementById('restore-form');
@@ -191,8 +192,8 @@
     }
 
     var restoreDays = parseInt(restoreDaysInput.value, 10);
-    if (isNaN(restoreDays) || restoreDays < 1 || restoreDays > 30) {
-      restoreDaysError.textContent = 'Restore duration must be between 1 and 30 days.';
+    if (isNaN(restoreDays) || restoreDays < 1) {
+      restoreDaysError.textContent = 'Restore duration must be at least 1 day.';
       restoreDaysInput.classList.add('invalid');
       valid = false;
     }
@@ -625,10 +626,11 @@
   }
 
   /**
-   * Populate the destination dropdown with options.
+   * Populate the destination dropdown with options and build the ARN → URI lookup map.
    */
   function populateDestinations(destinations) {
     destinationSelect.innerHTML = '';
+    destinationsMap = {};
 
     if (destinations.length === 0) {
       var emptyOpt = document.createElement('option');
@@ -645,6 +647,7 @@
       // Display the location URI (e.g., nfs://server/export/path)
       opt.textContent = dest.locationUri;
       destinationSelect.appendChild(opt);
+      destinationsMap[dest.locationArn] = dest.locationUri;
     }
   }
 
@@ -794,7 +797,7 @@
     summary.appendChild(createDetailFieldWithBadge('Status', detail.status || 'Unknown', getStatusBadgeClass(detail.status)));
     summary.appendChild(createDetailField('Retrieval Tier', detail.retrievalTier || '—'));
     summary.appendChild(createDetailField('Restore Duration', detail.restoreDays ? detail.restoreDays + ' days' : '—'));
-    summary.appendChild(createDetailField('Destination', detail.destinationLocationArn || 'Default'));
+    summary.appendChild(createDetailField('Destination', destinationsMap[detail.destinationLocationArn] || detail.destinationLocationArn || 'Default'));
     summary.appendChild(createDetailField('Objects', (detail.restoredCount || 0) + ' / ' + (detail.objectCount || 0)));
     summary.appendChild(createDetailField('Submitted', formatTimestamp(detail.submittedAt)));
     if (detail.restoreExpiresAt) {

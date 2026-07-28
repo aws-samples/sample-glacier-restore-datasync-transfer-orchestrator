@@ -37,10 +37,10 @@ describe('ApiConstruct', () => {
     });
   });
 
-  test('creates three Lambda functions with Node.js 20.x runtime', () => {
+  test('creates Lambda functions with Node.js 24.x runtime', () => {
     template.resourceCountIs('AWS::Lambda::Function', 5); // 4 API handlers + 1 orchestrator mock
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Runtime: 'nodejs20.x',
+      Runtime: 'nodejs24.x',
       MemorySize: 256,
       Timeout: 30,
     });

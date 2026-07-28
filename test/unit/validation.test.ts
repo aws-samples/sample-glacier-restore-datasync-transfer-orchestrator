@@ -155,10 +155,10 @@ describe("validateRestoreDays", () => {
     expect(result.errors[0].field).toBe("restoreDays");
   });
 
-  it("rejects value above maximum (31)", () => {
+  it("accepts values above 30 (no upper bound)", () => {
     const result = validateRestoreDays(31);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].field).toBe("restoreDays");
+    expect(result.errors).toEqual([]);
+    expect(result.value).toBe(31);
   });
 
   it("rejects non-integer values", () => {

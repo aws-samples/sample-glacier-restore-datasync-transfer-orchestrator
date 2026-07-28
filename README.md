@@ -33,17 +33,17 @@ The orchestrator handles each request intelligently:
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with appropriate credentials
 - [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/cli.html) v2 (`npm install -g aws-cdk`)
 - An AWS account with permissions to create Lambda, API Gateway, DynamoDB, S3, CloudFront, Cognito, and DataSync resources
-- A pre-configured AWS DataSync task (source S3 → destination NFS/S3)
-- An S3 bucket for staging batch operation manifests and DataSync manifests
-- An IAM role for S3 Batch Operations
-- An IAM role for DataSync to access the source bucket and manifest bucket
+- (Optional) A pre-configured AWS DataSync task (source S3 → destination NFS/S3)
+- (Optional) An S3 bucket for staging batch operation manifests and DataSync manifests
+- (Optional) An IAM role for S3 Batch Operations
+- (Optional) An IAM role for DataSync to access the source bucket and manifest bucket
 
 ## Installation
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd restore-transfer-orchestrator
+git clone https://github.com/aws-samples/sample-glacier-restore-datasync-transfer-orchestrator.git
+cd sample-glacier-restore-datasync-transfer-orchestrator
 
 # Install dependencies
 npm install
@@ -87,29 +87,62 @@ If this is your first CDK deployment in the target account/region, bootstrap the
 cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
 ```
 
-### Build and synthesize
+### Testing infrastructure (optional — if you don't have DataSync resources)
+
+If you don't already have a DataSync task, staging bucket, S3 Batch Operations role, and DataSync S3 role, you can deploy the optional `RestoreTransferTestingStack` to provision all of these. Skip this section if you already have these resources.
+
+The testing stack creates:
+
+- VPC with public subnet
+- Source S3 bucket (with Glacier lifecycle rule)
+- Staging S3 bucket
+- NFS server EC2 instance
+- DataSync agent EC2 instance
+- DataSync task, locations, and IAM roles
+- S3 Batch Operations role
+
+#### Two-phase deployment
+
+**Phase 1** — Deploy without activation key to stand up EC2 instances:
 
 ```bash
-# Compile TypeScript
-npm run build
+export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+export CDK_DEFAULT_REGION=us-west-2
 
-# Preview the CloudFormation template
-cdk synth
+cdk deploy RestoreTransferTestingStack \
+  --parameters ActivationCidr=$(curl -s ifconfig.me)/32
+```
+
+**Phase 2** — Activate the DataSync agent, then redeploy:
+
+```bash
+# Get the activation key (use the agent public IP from Phase 1 outputs)
+curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&redirect_type=TEXT"
+# The activation key is in the Location header of the 302 response
+
+# Redeploy with the key
+cdk deploy RestoreTransferTestingStack \
+  --parameters ActivationKey=XXXXX-XXXXX-XXXXX-XXXXX-XXXXX \
+  --parameters ActivationCidr=$(curl -s ifconfig.me)/32
+```
+
+#### Set environment variables from testing stack outputs
+
+```bash
+export DATASYNC_TASK_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncTaskArnOutput'].OutputValue" --output text)
+export STAGING_BUCKET=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='StagingBucketNameOutput'].OutputValue" --output text)
+export BATCH_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='BatchRoleArnOutput'].OutputValue" --output text)
+export DATASYNC_S3_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncS3RoleArnOutput'].OutputValue" --output text)
 ```
 
 ### Deploy
 
 ```bash
-# Review changes before deploying
-cdk diff
-
 # Deploy the stack
 cdk deploy RestoreTransferStack
 ```
 
-> **Note:** If you don't already have prerequisite resources (DataSync task, S3 staging bucket, S3 Batch Operations role, DataSync S3 role), you can deploy the `RestoreTransferTestingStack` first — it provisions all of these for you. See [Testing Infrastructure](#testing-infrastructure-optional) below.
-
-The deploy command will output the API endpoint URL and the Web UI CloudFront URL.
+The deploy command will output the API endpoint URL, the Web UI CloudFront URL, and the Cognito User Pool ID.
 
 ### Post-deployment: create a Cognito user
 
@@ -140,55 +173,7 @@ The User Pool ID and Client ID are available in the stack outputs (`CognitoUserP
 ENV=prod cdk deploy RestoreTransferStack
 ```
 
-## Testing infrastructure (optional)
-
-An optional `RestoreTransferTestingStack` provisions all prerequisite resources for dev/test:
-
-- VPC with public subnet
-- Source S3 bucket (with Glacier lifecycle rule)
-- Staging S3 bucket
-- NFS server EC2 instance
-- DataSync agent EC2 instance
-- DataSync task, locations, and IAM roles
-- S3 Batch Operations role
-
-### Two-phase deployment
-
-**Phase 1** — Deploy without activation key to stand up EC2 instances:
-
-```bash
-export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-export CDK_DEFAULT_REGION=us-west-2
-
-cdk deploy RestoreTransferTestingStack \
-  --parameters ActivationCidr=$(curl -s ifconfig.me)/32
-```
-
-**Phase 2** — Activate the DataSync agent, then redeploy:
-
-```bash
-# Get the activation key (use the agent public IP from Phase 1 outputs)
-curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&redirect_type=TEXT"
-# The activation key is in the Location header of the 302 response
-
-# Redeploy with the key
-cdk deploy RestoreTransferTestingStack \
-  --parameters ActivationKey=XXXXX-XXXXX-XXXXX-XXXXX-XXXXX \
-  --parameters ActivationCidr=$(curl -s ifconfig.me)/32
-```
-
-**Deploy the main stack using testing infrastructure outputs:**
-
-```bash
-export DATASYNC_TASK_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncTaskArnOutput'].OutputValue" --output text)
-export STAGING_BUCKET=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='StagingBucketNameOutput'].OutputValue" --output text)
-export BATCH_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='BatchRoleArnOutput'].OutputValue" --output text)
-export DATASYNC_S3_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name RestoreTransferTestingStack --query "Stacks[0].Outputs[?OutputKey=='DataSyncS3RoleArnOutput'].OutputValue" --output text)
-
-cdk deploy RestoreTransferStack
-```
-
-### Upload test data
+## Upload test data
 
 A helper script uploads sample files to various Glacier storage classes. It supports configurable file counts, folder nesting depth, and storage class selection — useful for testing glob patterns and batch operation thresholds.
 
@@ -222,6 +207,91 @@ SOURCE_BUCKET=$(aws cloudformation describe-stacks --stack-name RestoreTransferT
 ./scripts/upload-test-data.sh "$SOURCE_BUCKET" -n 15 -d 3
 ```
 
+## Testing a transfer in the UI
+
+Once the testing stack and main stack are deployed, you can submit a restore-and-transfer request through the web UI. This walkthrough uses the test environment resources.
+
+### 1. Log in
+
+Open the Web UI URL from the stack outputs (`WebUiUrl`). You'll be redirected to the Cognito hosted login page. Sign in with the user you created in the [post-deployment step](#post-deployment-create-a-cognito-user).
+
+![Amazon Cognito login window](docs/cognito-signin.png)
+
+### 2. Fill out the restore request form
+
+| Field | What to enter |
+|-------|---------------|
+| **S3 Bucket** | The source bucket name from the testing stack (the `SourceBucketNameOutput` value) |
+| **File Paths** | One path per line. Use exact keys (e.g., `project-alpha/renders/v01/renders_000.exr`) or glob patterns (e.g., `project-alpha/renders/v01/*`). These should match files you uploaded with the test data script. |
+| **Retrieval Tier** | `Standard` is a good default for testing. `Expedited` is faster (minutes) but only works for Glacier, not Deep Archive. `Bulk` is cheapest but can take multiple hours, depending on the tier. |
+| **Restore Duration** | Number of days the restored copies remain accessible. Use a low value like `1` for testing. |
+| **Transfer Destination** | Select an NFS destination from the dropdown. The testing stack creates two: `/data/datasync-destination` and `/data/datasync-destination-2`. |
+
+> **Glob pattern limitations:** Only single-level `*` wildcards are supported (e.g., `renders/*.exr` matches files directly in `renders/`). Recursive patterns (`**`) and single-character wildcards (`?`) are not supported. To match files in nested subdirectories, submit separate patterns for each level (e.g., `renders/shot-01/*.exr`, `renders/shot-02/*.exr`) or use exact paths.
+
+![Restore transfer inputs](docs/transfer-setup.png)
+
+### 3. Submit and monitor
+
+Click **Submit Restore Request**. The request appears in the dashboard below the form with a status of **Submitted**. The dashboard auto-refreshes every 10 seconds.
+
+The request progresses through these stages:
+
+1. **Resolving Paths** — Glob patterns are expanded to concrete S3 keys
+2. **Detecting Storage Class** — Each object is checked for its current storage tier
+3. **Initiating Restore** — Glacier restore requests are issued
+4. **Restore In Progress** — Polling until objects are restored (duration depends on retrieval tier)
+5. **Starting DataSync** — A manifest is uploaded and a DataSync task execution starts
+6. **DataSync In Progress** — Transfer is running to the NFS destination
+7. **Transfer Complete** — All objects have been transferred
+
+### 4. View request details
+
+Click any row in the dashboard to open the detail panel. This shows:
+
+- Full request parameters (bucket, tier, destination)
+- Object progress (restored count / total)
+- Status timeline with timestamps and duration between each step
+- A link to download the transfer manifest (once generated)
+
+![Restore transfer status](docs/transfer-status.png)
+
+### 5. Verify on the NFS server
+
+Connect to the NFS server instance using SSM Session Manager (no SSH or key pair is configured on the instance).
+
+**Option A — From the AWS Console:**
+
+1. Open the [EC2 Instances console](https://console.aws.amazon.com/ec2/home#Instances)
+2. Find the instance named `RestoreTransferTestingStack/NfsServer`
+3. Select it → **Connect** → **SSM Session Manager** tab → **Connect**
+4. In the shell session, run: `ls /data/datasync-destination/`
+
+> **Note:** Your IAM user/role needs the `ssm:StartSession` permission on the instance. See the [Session Manager prerequisites](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-prerequisites.html) for required IAM policies.
+
+**Option B — From the CLI (requires the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)):**
+
+```bash
+# Get the NFS server instance ID
+NFS_INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=RestoreTransferTestingStack/NfsServer" \
+             "Name=instance-state-name,Values=running" \
+  --query "Reservations[0].Instances[0].InstanceId" --output text)
+
+# Start a session
+aws ssm start-session --target "$NFS_INSTANCE_ID"
+
+# Once connected, check the destination directory
+ls /data/datasync-destination/
+```
+
+### Tips for testing
+
+- **Quick iteration:** Use `Expedited` tier with Glacier Flexible Retrieval objects for restores that complete in 1–5 minutes.
+- **Test batch operations:** Upload 50+ files with the test data script to trigger S3 Batch Operations instead of individual `RestoreObject` calls.
+- **Test glob patterns:** Use deep nesting (`-d 4`) when uploading test data, then submit a request with patterns like `glacier/depth-2/*.dat` to match files at a specific level.
+- **Test multiple destinations:** Submit separate requests targeting each NFS destination to verify the dynamic task resolution logic.
+
 ## Development
 
 ```bash
@@ -248,7 +318,10 @@ USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name RestoreTransferSt
 CLIENT_ID=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
   --query "Stacks[0].Outputs[?OutputKey=='CognitoClientId'].OutputValue" --output text)
 WEB_UI_URL=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
-  --query "Stacks[0].Outputs[?OutputKey=='WebUiUrl'].OutputValue" --output text)
+  --query "Stacks[0].Outputs[?OutputKey=='WebUiUrl'].OutputValue" --output text) \
+COGNITO_DOMAIN=$(aws cognito-idp describe-user-pool \
+  --user-pool-id "$USER_POOL_ID" \
+  --query "UserPool.Domain" --output text)
 
 cat > src/web-ui/config.js << EOF
 window.__CONFIG__ = {
@@ -256,7 +329,7 @@ window.__CONFIG__ = {
   "cognito": {
     "userPoolId": "${USER_POOL_ID}",
     "clientId": "${CLIENT_ID}",
-    "domain": "https://<your-cognito-domain>.auth.${CDK_DEFAULT_REGION}.amazoncognito.com",
+    "domain": "https://${COGNITO_DOMAIN}.auth.${CDK_DEFAULT_REGION}.amazoncognito.com",
     "redirectUri": "http://localhost:8080",
     "logoutUri": "http://localhost:8080"
   }
@@ -272,10 +345,10 @@ python3 -m http.server 8080 --directory src/web-ui
 ## Project structure
 
 ```
-├── bin/                    # CDK app entry point
+├── bin/                                # CDK app entry point
 ├── lib/
-│   ├── config/             # Environment configuration
-│   ├── constructs/         # CDK construct definitions
+│   ├── config/                         # Environment configuration
+│   ├── constructs/                     # CDK construct definitions
 │   │   ├── api-construct.ts            # REST API with Cognito authorizer
 │   │   ├── auth-construct.ts           # Cognito User Pool, Client & Hosted UI
 │   │   ├── orchestrator-construct.ts   # Durable workflow Lambda
@@ -283,13 +356,13 @@ python3 -m http.server 8080 --directory src/web-ui
 │   │   └── web-ui-construct.ts         # S3 + CloudFront with auth config
 │   ├── restore-transfer-stack.ts       # Main application stack
 │   └── testing-infrastructure-stack.ts # Optional test infrastructure
-├── scripts/                # Helper scripts (test data upload)
+├── scripts/                            # Helper scripts (test data upload)
 ├── src/
-│   ├── api/                # API Lambda handlers
-│   ├── orchestrator/       # Durable workflow Lambda + steps
-│   ├── shared/             # Shared types, constants, validation
-│   └── web-ui/             # Static web UI assets (with Cognito login)
-└── test/                   # Unit tests
+│   ├── api/                            # API Lambda handlers
+│   ├── orchestrator/                   # Durable workflow Lambda + steps
+│   ├── shared/                         # Shared types, constants, validation
+│   └── web-ui/                         # Static web UI assets (with Cognito login)
+└── test/                               # Unit tests
 ```
 
 ## Useful commands

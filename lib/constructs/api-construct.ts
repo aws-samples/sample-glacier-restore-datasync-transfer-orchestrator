@@ -64,7 +64,7 @@ export class ApiConstruct extends Construct {
     const submitRequestFn = new nodejs.NodejsFunction(this, 'SubmitRequestFunction', {
       entry: 'src/api/submit-request.ts',
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       memorySize: 256,
       timeout: cdk.Duration.seconds(30),
       environment: {
@@ -82,7 +82,7 @@ export class ApiConstruct extends Construct {
     const getRequestsFn = new nodejs.NodejsFunction(this, 'GetRequestsFunction', {
       entry: 'src/api/get-requests.ts',
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       memorySize: 256,
       timeout: cdk.Duration.seconds(30),
       environment: {
@@ -99,7 +99,7 @@ export class ApiConstruct extends Construct {
     const getDataSyncDestinationsFn = new nodejs.NodejsFunction(this, 'GetDataSyncDestinationsFunction', {
       entry: 'src/api/get-datasync-destinations.ts',
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       memorySize: 256,
       timeout: cdk.Duration.seconds(30),
       environment: {},
@@ -121,7 +121,7 @@ export class ApiConstruct extends Construct {
     const getRequestStatusFn = new nodejs.NodejsFunction(this, 'GetRequestStatusFunction', {
       entry: 'src/api/get-request-status.ts',
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       memorySize: 256,
       timeout: cdk.Duration.seconds(30),
       environment: {
@@ -183,7 +183,7 @@ export class ApiConstruct extends Construct {
       const getManifestUrlFn = new nodejs.NodejsFunction(this, 'GetManifestUrlFunction', {
         entry: 'src/api/get-manifest-url.ts',
         handler: 'handler',
-        runtime: lambda.Runtime.NODEJS_20_X,
+        runtime: lambda.Runtime.NODEJS_24_X,
         memorySize: 256,
         timeout: cdk.Duration.seconds(30),
         environment: {

@@ -307,6 +307,15 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
     task.cfnOptions.condition = hasActivationKey;
 
+    // Explicit dependencies: locations and agent must not be deleted before the task.
+    // CloudFormation reverses these during deletion, ensuring the task is removed first.
+    task.addResourceDependency(s3Location);
+    task.addResourceDependency(nfsLocation);
+    task.addResourceDependency(agent);
+
+    // The S3 location depends on its IAM role — prevent role deletion while location exists
+    s3Location.addResourceDependency(dataSyncS3Role.node.defaultChild as cdk.CfnResource);
+
     this.dataSyncTaskArn = task.attrTaskArn;
 
     // ─── S3 Batch Operations Role ──────────────────────────────────────

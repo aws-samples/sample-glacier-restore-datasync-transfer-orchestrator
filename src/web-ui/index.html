@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Glacier Restore &amp; DataSync</title>
+  <title>S3 Glacier Restore and Transfer Orchestrator</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="app-header">
-    <h1>Glacier Restore &amp; DataSync</h1>
+    <h1>S3 Glacier Restore and Transfer Orchestrator</h1>
     <div class="user-info" id="user-info" hidden>
       <span id="user-email" class="user-email"></span>
       <button id="logout-btn" class="btn btn-logout" type="button" aria-label="Sign out of your account">Sign Out</button>
@@ -82,11 +82,10 @@
             id="restore-days-input"
             name="restoreDays"
             min="1"
-            max="30"
             value="7"
             aria-describedby="restore-days-help"
           >
-          <small id="restore-days-help" class="form-help">Number of days the restored object remains accessible in S3 Standard (1–30, default 7)</small>
+          <small id="restore-days-help" class="form-help">Number of days the restored object remains accessible in S3 Standard (minimum 1, default 7)</small>
           <span id="restore-days-error" class="form-error" role="alert" aria-live="polite"></span>
         </div>
 

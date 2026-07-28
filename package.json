@@ -8,12 +8,18 @@
     "clean": "find bin lib src test -name '*.js' -not -path '*/web-ui/*' -delete && find bin lib src test -name '*.d.ts' -delete",
     "cdk": "cdk"
   },
+  "overrides": {
+    "brace-expansion": "5.0.8",
+    "minimatch": {
+      "brace-expansion": "5.0.8"
+    }
+  },
   "devDependencies": {
     "@aws/durable-execution-sdk-js-testing": "^1.1.1",
     "@types/aws-lambda": "^8.10.161",
     "@types/jest": "^30",
     "@types/node": "^24.10.1",
-    "aws-cdk": "2.1124.1",
+    "aws-cdk": "2.1133.0",
     "aws-sdk-client-mock": "^4.1.0",
     "cdk-nag": "^3.0.1",
     "esbuild": "^0.28.0",
