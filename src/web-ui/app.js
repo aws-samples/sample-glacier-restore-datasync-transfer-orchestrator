@@ -42,6 +42,7 @@
   const restoreDaysError = document.getElementById('restore-days-error');
   const destinationSelect = document.getElementById('destination-select');
   const destinationError = document.getElementById('destination-error');
+  const taskModeSelect = document.getElementById('task-mode-select');
   const statusFilter = document.getElementById('status-filter');
   const requestsTbody = document.getElementById('requests-tbody');
   const dashboardEmpty = document.getElementById('dashboard-empty');
@@ -284,7 +285,7 @@
   /**
    * Submit a restore request to the API.
    */
-  async function submitRequest(bucket, filePaths, retrievalTier, restoreDays, destinationLocationArn) {
+  async function submitRequest(bucket, filePaths, retrievalTier, restoreDays, destinationLocationArn, taskMode) {
     var token = await window.getIdToken();
     var headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -292,7 +293,7 @@
     const response = await fetch(API_BASE_URL + '/requests', {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays, destinationLocationArn: destinationLocationArn }),
+      body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays, destinationLocationArn: destinationLocationArn, taskMode: taskMode }),
     });
 
     if (response.status === 401) {
@@ -303,7 +304,7 @@
         return fetch(API_BASE_URL + '/requests', {
           method: 'POST',
           headers: retryHeaders,
-          body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays, destinationLocationArn: destinationLocationArn }),
+          body: JSON.stringify({ bucket: bucket, filePaths: filePaths, retrievalTier: retrievalTier, restoreDays: restoreDays, destinationLocationArn: destinationLocationArn, taskMode: taskMode }),
         });
       });
       if (!retryResponse) return; // redirected to login
@@ -410,18 +411,20 @@
     const retrievalTier = tierSelect.value;
     const restoreDays = parseInt(restoreDaysInput.value, 10);
     const destinationLocationArn = destinationSelect.value;
+    const taskMode = taskModeSelect.value;
 
     submitBtn.disabled = true;
     submitBtn.textContent = 'Submitting…';
     clearErrors();
 
     try {
-      const result = await submitRequest(bucket, filePaths, retrievalTier, restoreDays, destinationLocationArn);
+      const result = await submitRequest(bucket, filePaths, retrievalTier, restoreDays, destinationLocationArn, taskMode);
       formSuccess.textContent = 'Request submitted successfully. Request ID: ' + (result.requestId || 'N/A');
       formSuccess.hidden = false;
       form.reset();
       tierSelect.value = 'Standard';
       restoreDaysInput.value = '7';
+      taskModeSelect.value = 'BASIC';
       resetTierConstraints();
       // Restore the destination select to its current selection (don't reset it)
       if (destinationSelect.options.length > 0) {
@@ -798,6 +801,7 @@
     summary.appendChild(createDetailField('Retrieval Tier', detail.retrievalTier || '—'));
     summary.appendChild(createDetailField('Restore Duration', detail.restoreDays ? detail.restoreDays + ' days' : '—'));
     summary.appendChild(createDetailField('Destination', destinationsMap[detail.destinationLocationArn] || detail.destinationLocationArn || 'Default'));
+    summary.appendChild(createDetailField('Task Mode', detail.taskMode || 'BASIC'));
     summary.appendChild(createDetailField('Objects', (detail.restoredCount || 0) + ' / ' + (detail.objectCount || 0)));
     summary.appendChild(createDetailField('Submitted', formatTimestamp(detail.submittedAt)));
     if (detail.restoreExpiresAt) {

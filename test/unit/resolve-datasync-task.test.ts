@@ -6,6 +6,8 @@ import {
   CreateTaskCommand,
   ListLocationsCommand,
   CreateLocationS3Command,
+  DescribeLocationNfsCommand,
+  DescribeAgentCommand,
 } from "@aws-sdk/client-datasync";
 import { resolveDataSyncTask } from "../../src/orchestrator/utils/resolve-datasync-task";
 import type { ResolveDataSyncTaskParams } from "../../src/orchestrator/utils/resolve-datasync-task";
@@ -61,6 +63,7 @@ describe("resolveDataSyncTask", () => {
       dataSyncMock.on(DescribeTaskCommand).resolves({
         SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
         DestinationLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-different",
+        TaskMode: "BASIC",
       });
 
       // No match found → falls through to create
@@ -75,6 +78,43 @@ describe("resolveDataSyncTask", () => {
       const result = await resolveDataSyncTask(baseParams);
 
       expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-new");
+    });
+
+    it("skips tasks whose mode does not match even if source and destination match", async () => {
+      dataSyncMock.on(ListTasksCommand).resolves({
+        Tasks: [
+          { TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-basic-mode" },
+        ],
+      });
+
+      dataSyncMock.on(DescribeTaskCommand).resolves({
+        SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+        DestinationLocationArn: baseParams.destinationLocationArn,
+        TaskMode: "BASIC",
+      });
+
+      dataSyncMock.on(ListLocationsCommand).resolvesOnce({
+        Locations: [
+          {
+            LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+            LocationUri: "s3://my-source-bucket",
+          },
+        ],
+      }).resolves({ Locations: [] });
+
+      dataSyncMock.on(CreateLocationS3Command).resolves({
+        LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-new-s3",
+      });
+      dataSyncMock.on(CreateTaskCommand).resolves({
+        TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-enhanced-new",
+      });
+
+      // Request ENHANCED mode — should skip the BASIC task and create a new one
+      const result = await resolveDataSyncTask({ ...baseParams, taskMode: "ENHANCED" });
+
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-enhanced-new");
+      expect(dataSyncMock.commandCalls(CreateTaskCommand)).toHaveLength(1);
+      expect(dataSyncMock.commandCalls(CreateTaskCommand)[0].args[0].input.TaskMode).toBe("ENHANCED");
     });
 
     it("paginates through tasks list", async () => {
@@ -199,6 +239,41 @@ describe("resolveDataSyncTask", () => {
       });
     });
 
+    it("defaults to BASIC task mode when not specified", async () => {
+      dataSyncMock.on(ListLocationsCommand).resolves({ Locations: [] });
+      dataSyncMock.on(CreateLocationS3Command).resolves({
+        LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-new",
+      });
+      dataSyncMock.on(CreateTaskCommand).resolves({
+        TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-basic",
+      });
+
+      await resolveDataSyncTask(baseParams);
+
+      const createTaskCalls = dataSyncMock.commandCalls(CreateTaskCommand);
+      expect(createTaskCalls[0].args[0].input.TaskMode).toBe("BASIC");
+    });
+
+    it("creates a task with ENHANCED mode when specified", async () => {
+      dataSyncMock.on(ListLocationsCommand).resolves({ Locations: [] });
+      dataSyncMock.on(CreateLocationS3Command).resolves({
+        LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-new",
+      });
+      dataSyncMock.on(CreateTaskCommand).resolves({
+        TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-enhanced",
+      });
+
+      const result = await resolveDataSyncTask({
+        ...baseParams,
+        taskMode: "ENHANCED",
+      });
+
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-enhanced");
+
+      const createTaskCalls = dataSyncMock.commandCalls(CreateTaskCommand);
+      expect(createTaskCalls[0].args[0].input.TaskMode).toBe("ENHANCED");
+    });
+
     it("throws when CreateTask does not return a TaskArn", async () => {
       dataSyncMock.on(ListLocationsCommand).resolves({ Locations: [] });
       dataSyncMock.on(CreateLocationS3Command).resolves({
@@ -218,6 +293,94 @@ describe("resolveDataSyncTask", () => {
       await expect(resolveDataSyncTask(baseParams)).rejects.toThrow(
         'CreateLocationS3 for bucket "my-source-bucket" did not return a LocationArn'
       );
+    });
+  });
+
+  describe("agent mode validation", () => {
+    beforeEach(() => {
+      // Default: no existing tasks, create new
+      dataSyncMock.on(ListTasksCommand).resolves({ Tasks: [] });
+      dataSyncMock.on(ListLocationsCommand).resolves({ Locations: [] });
+      dataSyncMock.on(CreateLocationS3Command).resolves({
+        LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-new-s3",
+      });
+      dataSyncMock.on(CreateTaskCommand).resolves({
+        TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-new",
+      });
+    });
+
+    it("throws when ENHANCED mode is requested but destination uses a Basic agent", async () => {
+      dataSyncMock.on(DescribeLocationNfsCommand).resolves({
+        OnPremConfig: {
+          AgentArns: ["arn:aws:datasync:us-east-1:123456789012:agent/agent-basic"],
+        },
+      });
+      dataSyncMock.on(DescribeAgentCommand).resolves({
+        Platform: { Version: "2.0.1785300386.1" },
+      });
+
+      await expect(
+        resolveDataSyncTask({ ...baseParams, taskMode: "ENHANCED" })
+      ).rejects.toThrow("Task mode mismatch: requested ENHANCED mode");
+    });
+
+    it("throws when BASIC mode is requested but destination uses an Enhanced agent", async () => {
+      dataSyncMock.on(DescribeLocationNfsCommand).resolves({
+        OnPremConfig: {
+          AgentArns: ["arn:aws:datasync:us-east-1:123456789012:agent/agent-enhanced"],
+        },
+      });
+      dataSyncMock.on(DescribeAgentCommand).resolves({
+        Platform: { Version: "3.1.6491607403" },
+      });
+
+      await expect(
+        resolveDataSyncTask({ ...baseParams, taskMode: "BASIC" })
+      ).rejects.toThrow("Task mode mismatch: requested BASIC mode");
+    });
+
+    it("succeeds when ENHANCED mode matches an Enhanced agent", async () => {
+      dataSyncMock.on(DescribeLocationNfsCommand).resolves({
+        OnPremConfig: {
+          AgentArns: ["arn:aws:datasync:us-east-1:123456789012:agent/agent-enhanced"],
+        },
+      });
+      dataSyncMock.on(DescribeAgentCommand).resolves({
+        Platform: { Version: "3.1.6491607403" },
+      });
+
+      const result = await resolveDataSyncTask({ ...baseParams, taskMode: "ENHANCED" });
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-new");
+    });
+
+    it("succeeds when BASIC mode matches a Basic agent", async () => {
+      dataSyncMock.on(DescribeLocationNfsCommand).resolves({
+        OnPremConfig: {
+          AgentArns: ["arn:aws:datasync:us-east-1:123456789012:agent/agent-basic"],
+        },
+      });
+      dataSyncMock.on(DescribeAgentCommand).resolves({
+        Platform: { Version: "2.0.1785300386.1" },
+      });
+
+      const result = await resolveDataSyncTask({ ...baseParams, taskMode: "BASIC" });
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-new");
+    });
+
+    it("skips validation gracefully when DescribeLocationNfs fails", async () => {
+      dataSyncMock.on(DescribeLocationNfsCommand).rejects({ name: "InvalidRequestException" });
+
+      const result = await resolveDataSyncTask({ ...baseParams, taskMode: "ENHANCED" });
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-new");
+    });
+
+    it("skips validation when location has no agents configured", async () => {
+      dataSyncMock.on(DescribeLocationNfsCommand).resolves({
+        OnPremConfig: { AgentArns: [] },
+      });
+
+      const result = await resolveDataSyncTask({ ...baseParams, taskMode: "ENHANCED" });
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-new");
     });
   });
 });

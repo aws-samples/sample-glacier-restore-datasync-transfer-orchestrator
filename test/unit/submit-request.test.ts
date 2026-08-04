@@ -272,6 +272,119 @@ describe("POST /requests handler", () => {
     });
   });
 
+  describe("taskMode validation", () => {
+    it("returns 400 when taskMode is an invalid value", async () => {
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        taskMode: "INVALID",
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body);
+      expect(body.errors.some((e: { field: string }) => e.field === "taskMode")).toBe(true);
+    });
+
+    it("accepts BASIC task mode", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        taskMode: "BASIC",
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(202);
+    });
+
+    it("accepts ENHANCED task mode", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        taskMode: "ENHANCED",
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(202);
+    });
+
+    it("accepts case-insensitive task mode (enhanced → ENHANCED)", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        taskMode: "enhanced",
+      });
+
+      const result = await handler(event);
+
+      expect(result.statusCode).toBe(202);
+
+      const lambdaCalls = lambdaMock.commandCalls(InvokeCommand);
+      const payload = JSON.parse(
+        Buffer.from(lambdaCalls[0].args[0].input.Payload as Uint8Array).toString("utf-8")
+      );
+      expect(payload.taskMode).toBe("ENHANCED");
+    });
+
+    it("defaults to BASIC when taskMode is not provided", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+      });
+
+      await handler(event);
+
+      const lambdaCalls = lambdaMock.commandCalls(InvokeCommand);
+      const payload = JSON.parse(
+        Buffer.from(lambdaCalls[0].args[0].input.Payload as Uint8Array).toString("utf-8")
+      );
+      expect(payload.taskMode).toBe("BASIC");
+    });
+
+    it("persists taskMode to DynamoDB record", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      lambdaMock.on(InvokeCommand).resolves({});
+
+      const event = makeEvent({
+        bucket: "my-bucket",
+        filePaths: ["file.dat"],
+        retrievalTier: "Standard",
+        restoreDays: 7,
+        taskMode: "ENHANCED",
+      });
+
+      await handler(event);
+
+      const ddbCalls = ddbMock.commandCalls(PutCommand);
+      expect(ddbCalls[0].args[0].input.Item).toHaveProperty("taskMode", "ENHANCED");
+    });
+  });
+
   describe("validation errors", () => {
     it("returns 400 when bucket is missing", async () => {
       const event = makeEvent({

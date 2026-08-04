@@ -5,6 +5,9 @@
 /** Retrieval tier options for Glacier restores */
 export type RetrievalTier = "Expedited" | "Standard" | "Bulk";
 
+/** DataSync task mode: determines agent type and transfer behavior */
+export type DataSyncTaskMode = "BASIC" | "ENHANCED";
+
 /** S3 Glacier storage classes handled by the system */
 export type StorageClass = "GLACIER" | "DEEP_ARCHIVE" | "GLACIER_IR";
 
@@ -37,6 +40,8 @@ export interface RestoreRequest {
   restoreDays: number;
   /** NFS destination location ARN for DataSync transfer */
   destinationLocationArn?: string;
+  /** DataSync task mode (BASIC or ENHANCED). Defaults to BASIC if not specified. */
+  taskMode?: DataSyncTaskMode;
 }
 
 /** Represents a DataSync destination available for transfer */
@@ -78,6 +83,8 @@ export interface RestoreRequestRecord {
   dataSyncTaskArn?: string;
   /** NFS destination location ARN chosen by the user */
   destinationLocationArn?: string;
+  /** DataSync task mode used for this transfer */
+  taskMode?: DataSyncTaskMode;
   /** Total objects in request */
   objectCount: number;
   /** Objects successfully restored */

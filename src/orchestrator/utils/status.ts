@@ -60,6 +60,7 @@ export async function createRequestRecord(
     statusHistory: [{ status: "Submitted", timestamp: now }],
     ttl: Math.floor(Date.now() / 1000) + TTL_SECONDS,
     ...(request.destinationLocationArn && { destinationLocationArn: request.destinationLocationArn }),
+    ...(request.taskMode && { taskMode: request.taskMode }),
   };
 
   await docClient.send(
@@ -179,16 +180,19 @@ export async function markComplete(
       TableName: getTableName(),
       Key: { requestId, submittedAt },
       UpdateExpression:
-        "SET #status = :status, #completedAt = :completedAt, #ttl = :ttl",
+        "SET #status = :status, #completedAt = :completedAt, #ttl = :ttl, #statusHistory = list_append(if_not_exists(#statusHistory, :emptyList), :historyEntry)",
       ExpressionAttributeNames: {
         "#status": "status",
         "#completedAt": "completedAt",
         "#ttl": "ttl",
+        "#statusHistory": "statusHistory",
       },
       ExpressionAttributeValues: {
         ":status": finalStatus,
         ":completedAt": now,
         ":ttl": newTtl,
+        ":historyEntry": [{ status: finalStatus, timestamp: now }],
+        ":emptyList": [],
       },
     })
   );

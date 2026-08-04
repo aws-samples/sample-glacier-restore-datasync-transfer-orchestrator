@@ -141,6 +141,8 @@ describe('OrchestratorConstruct', () => {
               'datasync:CreateTask',
               'datasync:ListLocations',
               'datasync:CreateLocationS3',
+              'datasync:DescribeLocationNfs',
+              'datasync:DescribeAgent',
             ],
           }),
         ]),

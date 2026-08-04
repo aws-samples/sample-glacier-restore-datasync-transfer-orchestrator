@@ -138,8 +138,24 @@ export class OrchestratorConstruct extends Construct {
           'datasync:CreateTask',
           'datasync:ListLocations',
           'datasync:CreateLocationS3',
+          'datasync:DescribeLocationNfs',
+          'datasync:DescribeAgent',
         ],
         resources: ['*'],
+      })
+    );
+
+    // IAM permissions for DataSync Enhanced mode (requires CreateServiceLinkedRole)
+    this.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['iam:CreateServiceLinkedRole'],
+        resources: ['arn:aws:iam::*:role/aws-service-role/datasync.amazonaws.com/*'],
+        conditions: {
+          StringEquals: {
+            'iam:AWSServiceName': 'datasync.amazonaws.com',
+          },
+        },
       })
     );
 

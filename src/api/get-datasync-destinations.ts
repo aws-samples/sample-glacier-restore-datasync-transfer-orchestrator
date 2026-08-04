@@ -32,6 +32,7 @@ export async function handler(
 ): Promise<APIGatewayProxyResult> {
   try {
     const destinations: DataSyncDestination[] = [];
+    const seenUris = new Set<string>();
     let nextToken: string | undefined;
 
     do {
@@ -50,7 +51,8 @@ export async function handler(
 
       if (response.Locations) {
         for (const loc of response.Locations) {
-          if (loc.LocationArn && loc.LocationUri) {
+          if (loc.LocationArn && loc.LocationUri && !seenUris.has(loc.LocationUri)) {
+            seenUris.add(loc.LocationUri);
             destinations.push({
               locationArn: loc.LocationArn,
               locationUri: loc.LocationUri,

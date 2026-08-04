@@ -2,7 +2,7 @@
  * Shared constants for the Glacier Restore DataSync system.
  */
 
-import type { RetrievalTier, RequestStatus } from "./types";
+import type { RetrievalTier, RequestStatus, DataSyncTaskMode } from "./types";
 
 /** Batch operations threshold: use S3 Batch Operations when object count exceeds this */
 export const BATCH_THRESHOLD = 50;
@@ -123,6 +123,15 @@ export const VALID_RETRIEVAL_TIERS: readonly RetrievalTier[] = [
   "Standard",
   "Bulk",
 ] as const;
+
+/** Valid DataSync task modes */
+export const VALID_TASK_MODES: readonly DataSyncTaskMode[] = [
+  "BASIC",
+  "ENHANCED",
+] as const;
+
+/** Default DataSync task mode when not specified */
+export const DEFAULT_TASK_MODE: DataSyncTaskMode = "BASIC";
 
 /** Tiers NOT available for Deep Archive */
 export const DEEP_ARCHIVE_UNAVAILABLE_TIERS: readonly RetrievalTier[] = [

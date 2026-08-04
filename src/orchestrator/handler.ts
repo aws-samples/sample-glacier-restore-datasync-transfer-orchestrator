@@ -405,6 +405,7 @@ const durableHandler = async (event: RestoreRequest & { requestId?: string; subm
         sourceBucket: event.bucket,
         destinationLocationArn: event.destinationLocationArn,
         dataSyncS3RoleArn: getDataSyncS3RoleArn(),
+        taskMode: event.taskMode,
       });
     }
     return getDataSyncTaskArn();

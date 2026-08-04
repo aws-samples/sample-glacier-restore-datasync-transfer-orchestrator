@@ -10,6 +10,8 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { validateRestoreRequest } from "../shared/validation";
 import { createRequestRecord } from "../orchestrator/utils/status";
+import type { DataSyncTaskMode } from "../shared/types";
+import { VALID_TASK_MODES, DEFAULT_TASK_MODE } from "../shared/constants";
 
 const lambdaClient = new LambdaClient({});
 
@@ -79,6 +81,23 @@ export async function handler(
     };
   }
 
+  // Validate taskMode if provided
+  const rawTaskMode = typeof input.taskMode === "string"
+    ? input.taskMode.toUpperCase().trim()
+    : undefined;
+
+  if (rawTaskMode && !VALID_TASK_MODES.includes(rawTaskMode as DataSyncTaskMode)) {
+    return {
+      statusCode: 400,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        errors: [{ field: "taskMode", message: `Task mode must be one of: ${VALID_TASK_MODES.join(", ")}` }],
+      }),
+    };
+  }
+
+  const taskMode: DataSyncTaskMode = (rawTaskMode as DataSyncTaskMode) ?? DEFAULT_TASK_MODE;
+
   // Build the validated restore request using deduplicated paths
   const restoreRequest = {
     bucket: input.bucket as string,
@@ -86,6 +105,7 @@ export async function handler(
     retrievalTier: input.retrievalTier as string,
     restoreDays: validationResult.restoreDays!,
     destinationLocationArn,
+    taskMode,
   };
 
   // Create the request record in DynamoDB
@@ -97,6 +117,7 @@ export async function handler(
       retrievalTier: restoreRequest.retrievalTier as "Expedited" | "Standard" | "Bulk",
       restoreDays: restoreRequest.restoreDays,
       destinationLocationArn: restoreRequest.destinationLocationArn,
+      taskMode: restoreRequest.taskMode,
     });
   } catch (err) {
     return {
@@ -134,6 +155,7 @@ export async function handler(
             retrievalTier: record.retrievalTier,
             restoreDays: record.restoreDays,
             destinationLocationArn: record.destinationLocationArn,
+            taskMode: record.taskMode,
           })
         ),
       })

@@ -98,6 +98,15 @@
           <span id="destination-error" class="form-error" role="alert" aria-live="polite"></span>
         </div>
 
+        <div class="form-group">
+          <label for="task-mode-select">Task Mode</label>
+          <select id="task-mode-select" name="taskMode" aria-describedby="task-mode-help">
+            <option value="BASIC" selected>Basic</option>
+            <option value="ENHANCED">Enhanced</option>
+          </select>
+          <small id="task-mode-help" class="form-help">Enhanced mode transfers data in parallel for higher performance. Requires an Enhanced mode agent for NFS destinations.</small>
+        </div>
+
         <div class="form-actions">
           <button type="submit" id="submit-btn" class="btn btn-primary">Submit Restore Request</button>
         </div>

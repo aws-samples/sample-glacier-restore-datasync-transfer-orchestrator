@@ -31,8 +31,10 @@ import { Construct } from 'constructs';
  *   npx cdk deploy RestoreTransferTestingStack --parameters ActivationKey=<key>
  */
 export class TestingInfrastructureStack extends cdk.Stack {
-  /** ARN of the DataSync task */
+  /** ARN of the DataSync task (Basic mode) */
   public readonly dataSyncTaskArn: string;
+  /** ARN of the DataSync task (Enhanced mode) */
+  public readonly dataSyncEnhancedTaskArn: string;
   /** Name of the staging bucket */
   public readonly stagingBucketName: string;
   /** ARN of the S3 Batch Operations role */
@@ -53,6 +55,25 @@ export class TestingInfrastructureStack extends cdk.Stack {
     const hasActivationKey = new cdk.CfnCondition(this, 'HasActivationKey', {
       expression: cdk.Fn.conditionNot(
         cdk.Fn.conditionEquals(activationKeyParam.valueAsString, ''),
+      ),
+    });
+
+    const enhancedActivationKeyParam = new cdk.CfnParameter(this, 'EnhancedActivationKey', {
+      type: 'String',
+      default: '',
+      description: 'DataSync Enhanced mode agent activation key. Leave empty on first deploy, then provide after retrieving from the Enhanced agent EC2 instance.',
+      allowedPattern: '([A-Z0-9]{5}(-[A-Z0-9]{5}){4})?',
+      constraintDescription: 'Must be a valid activation key (e.g. AAAAA-BBBBB-CCCCC-DDDDD-EEEEE) or empty',
+    });
+
+    const hasEnhancedActivationKey = new cdk.CfnCondition(this, 'HasEnhancedActivationKey', {
+      expression: cdk.Fn.conditionAnd(
+        cdk.Fn.conditionNot(
+          cdk.Fn.conditionEquals(enhancedActivationKeyParam.valueAsString, ''),
+        ),
+        cdk.Fn.conditionNot(
+          cdk.Fn.conditionEquals(activationKeyParam.valueAsString, ''),
+        ),
       ),
     });
 
@@ -97,6 +118,13 @@ export class TestingInfrastructureStack extends cdk.Stack {
       ec2.Peer.ipv4(activationCidrParam.valueAsString),
       ec2.Port.tcp(80),
       'DataSync agent activation (restrict to your IP)',
+    );
+
+    // Enhanced mode agents (v3) use HTTPS for activation
+    agentSg.addIngressRule(
+      ec2.Peer.ipv4(activationCidrParam.valueAsString),
+      ec2.Port.tcp(443),
+      'DataSync Enhanced agent activation over HTTPS (restrict to your IP)',
     );
 
     // ─── NFS Server EC2 Instance ───────────────────────────────────────
@@ -155,6 +183,34 @@ export class TestingInfrastructureStack extends cdk.Stack {
       agentName: 'RestoreTransferTestAgent',
     });
     (agent.node.defaultChild as cdk.CfnResource ?? agent).cfnOptions.condition = hasActivationKey;
+
+    // ─── Enhanced Mode DataSync Agent EC2 Instance ─────────────────────
+    // Uses the v3 AMI which supports Enhanced mode (gatewayType=SYNC_ENHANCED)
+    // Retrieved via: aws ssm get-parameter --name /aws/service/datasync/ami/v3 --region <region>
+    const enhancedAgentAmi = ec2.MachineImage.fromSsmParameter(
+      '/aws/service/datasync/ami/v3',
+    );
+
+    const enhancedAgentInstance = new ec2.Instance(this, 'DataSyncEnhancedAgent', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.M6A, ec2.InstanceSize.XLARGE2),
+      machineImage: enhancedAgentAmi,
+      securityGroup: agentSg,
+      associatePublicIpAddress: true,
+    });
+
+    // Grant SSM Session Manager access to all instances for debugging
+    const ssmPolicy = iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore');
+    nfsInstance.role.addManagedPolicy(ssmPolicy);
+    enhancedAgentInstance.role.addManagedPolicy(ssmPolicy);
+
+    // ─── Enhanced DataSync Agent Resource (conditional) ─────────────────
+    const enhancedAgent = new datasync.CfnAgent(this, 'EnhancedAgent', {
+      activationKey: enhancedActivationKeyParam.valueAsString,
+      agentName: 'RestoreTransferTestAgentEnhanced',
+    });
+    (enhancedAgent.node.defaultChild as cdk.CfnResource ?? enhancedAgent).cfnOptions.condition = hasEnhancedActivationKey;
 
     // ─── Staging Bucket ────────────────────────────────────────────────
     // Defined early because DataSync S3 role needs access to it for manifests
@@ -318,6 +374,37 @@ export class TestingInfrastructureStack extends cdk.Stack {
 
     this.dataSyncTaskArn = task.attrTaskArn;
 
+    // ─── Enhanced Mode DataSync Task (conditional) ─────────────────────
+    // Uses a separate NFS location with the Enhanced mode agent.
+    // Enhanced mode tasks don't need a CloudWatch log group ARN — they
+    // automatically log to /aws/datasync.
+    const nfsLocationEnhanced = new datasync.CfnLocationNFS(this, 'NfsLocationEnhanced', {
+      serverHostname: nfsInstance.instancePrivateIp,
+      subdirectory: '/data/datasync-destination',
+      onPremConfig: {
+        agentArns: [enhancedAgent.attrAgentArn],
+      },
+    });
+    nfsLocationEnhanced.cfnOptions.condition = hasEnhancedActivationKey;
+
+    const enhancedTask = new datasync.CfnTask(this, 'DataSyncTaskEnhanced', {
+      sourceLocationArn: s3Location.attrLocationArn,
+      destinationLocationArn: nfsLocationEnhanced.attrLocationArn,
+      name: 'RestoreTransferTestTaskEnhanced',
+      taskMode: 'ENHANCED',
+      options: {
+        verifyMode: 'ONLY_FILES_TRANSFERRED',
+        overwriteMode: 'ALWAYS',
+        preserveDeletedFiles: 'PRESERVE',
+      },
+    });
+    enhancedTask.cfnOptions.condition = hasEnhancedActivationKey;
+    enhancedTask.addResourceDependency(s3Location);
+    enhancedTask.addResourceDependency(nfsLocationEnhanced);
+    enhancedTask.addResourceDependency(enhancedAgent);
+
+    this.dataSyncEnhancedTaskArn = enhancedTask.attrTaskArn;
+
     // ─── S3 Batch Operations Role ──────────────────────────────────────
     const batchRole = new iam.Role(this, 'S3BatchOperationsRole', {
       assumedBy: new iam.ServicePrincipal('batchoperations.s3.amazonaws.com'),
@@ -346,9 +433,16 @@ export class TestingInfrastructureStack extends cdk.Stack {
     // ─── Outputs ───────────────────────────────────────────────────────
     new cdk.CfnOutput(this, 'DataSyncTaskArnOutput', {
       value: task.attrTaskArn,
-      description: 'DataSync task ARN — use as DATASYNC_TASK_ARN',
+      description: 'DataSync task ARN (Basic mode) — use as DATASYNC_TASK_ARN',
       exportName: 'RestoreTransferTest-DataSyncTaskArn',
       condition: hasActivationKey,
+    });
+
+    new cdk.CfnOutput(this, 'DataSyncEnhancedTaskArnOutput', {
+      value: enhancedTask.attrTaskArn,
+      description: 'DataSync task ARN (Enhanced mode)',
+      exportName: 'RestoreTransferTest-DataSyncEnhancedTaskArn',
+      condition: hasEnhancedActivationKey,
     });
 
     new cdk.CfnOutput(this, 'StagingBucketNameOutput', {
@@ -393,12 +487,22 @@ export class TestingInfrastructureStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'DataSyncAgentPublicIp', {
       value: agentInstance.instancePublicIp,
-      description: 'DataSync agent public IP — use for agent activation',
+      description: 'DataSync Basic agent public IP — use for activation',
     });
 
     new cdk.CfnOutput(this, 'AgentActivationCommand', {
       value: `curl -v "http://${agentInstance.instancePublicIp}/?gatewayType=SYNC&activationRegion=${this.region}&redirect_type=TEXT"`,
-      description: 'Run this after Phase 1 deploy to get the activation key for Phase 2',
+      description: 'Run this after Phase 1 deploy to get the Basic mode activation key',
+    });
+
+    new cdk.CfnOutput(this, 'DataSyncEnhancedAgentPublicIp', {
+      value: enhancedAgentInstance.instancePublicIp,
+      description: 'DataSync Enhanced agent public IP — use for activation',
+    });
+
+    new cdk.CfnOutput(this, 'EnhancedAgentActivationCommand', {
+      value: `curl -v "http://${enhancedAgentInstance.instancePublicIp}/?gatewayType=SYNC_ENHANCED&activationRegion=${this.region}&redirect_type=TEXT"`,
+      description: 'Run this after Phase 1 deploy to get the Enhanced mode activation key',
     });
   }
 }
