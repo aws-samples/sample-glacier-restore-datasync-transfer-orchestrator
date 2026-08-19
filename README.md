@@ -63,7 +63,7 @@ The stack uses environment variables to configure deployment. Set these before d
 | `ENV` | Target environment (`dev` or `prod`). Defaults to `dev`. | No |
 | `CERTIFICATE_ARN` | ACM certificate ARN for the internal ALB HTTPS listener. Must be in the same region as the deployment. | Yes |
 | `EXISTING_VPC_ID` | Existing VPC ID to use. When absent/empty, the stack creates a new VPC with private subnets and NAT Gateway. | No |
-| `APP_URL` | Public URL users access the web UI through (e.g. `https://restore-tool.internal`). Used for Cognito callback/logout URLs and the front-end redirect URIs. When absent, the internal ALB DNS name is used. | No |
+| `APP_URL` | URL users access the web UI through (e.g. `https://restore-tool.internal`). Used for Cognito callback/logout URLs and the front-end redirect URIs. When absent, the internal ALB DNS name is used. | No |
 | `DATASYNC_TASK_ARN` | Default/fallback DataSync task ARN, used when a request does not specify a destination | No |
 | `STAGING_BUCKET` | S3 bucket name for batch and DataSync manifests | Yes |
 | `CDK_DEFAULT_ACCOUNT` | AWS account ID for deployment | Yes |
