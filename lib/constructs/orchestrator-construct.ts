@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib/core';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -21,6 +22,10 @@ export interface OrchestratorConstructProps {
   batchRoleArn: string;
   /** ARN of the IAM role DataSync uses to access the manifest in S3 */
   dataSyncS3RoleArn: string;
+  /** VPC for Lambda placement */
+  vpc?: ec2.IVpc;
+  /** Security group for Lambda functions */
+  lambdaSecurityGroup?: ec2.ISecurityGroup;
 }
 
 /**
@@ -56,7 +61,14 @@ export class OrchestratorConstruct extends Construct {
       durableConfig: {
         executionTimeout: cdk.Duration.days(3),
         retentionPeriod: cdk.Duration.days(7)
-      }
+      },
+      ...(props.vpc && {
+        vpc: props.vpc,
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      }),
+      ...(props.lambdaSecurityGroup && {
+        securityGroups: [props.lambdaSecurityGroup],
+      }),
     });
 
     // Attach the managed policy required for durable execution checkpointing

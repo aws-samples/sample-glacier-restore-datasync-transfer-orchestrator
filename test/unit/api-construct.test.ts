@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib/core';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { ApiConstruct } from '../../lib/constructs/api-construct';
@@ -171,5 +172,87 @@ describe('ApiConstruct', () => {
   test('exposes the REST API as a public property', () => {
     expect(construct.api).toBeDefined();
     expect(construct.api.restApiId).toBeDefined();
+  });
+});
+
+describe('ApiConstruct - Private API Gateway configuration', () => {
+  let template: Template;
+
+  beforeAll(() => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, 'PrivateApiTestStack');
+
+    const vpc = new ec2.Vpc(stack, 'TestVpc', { maxAzs: 2 });
+    const sg = new ec2.SecurityGroup(stack, 'LambdaSg', { vpc });
+    const table = new dynamodb.Table(stack, 'Table', {
+      partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
+    });
+    const orchestratorFn = new lambda.Function(stack, 'OrchestratorFn', {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline('exports.handler = async () => {}'),
+    });
+
+    new ApiConstruct(stack, 'Api', {
+      table,
+      orchestratorFunction: orchestratorFn,
+      vpc,
+      lambdaSecurityGroup: sg,
+      vpcEndpointId: 'vpce-12345',
+      allowedOrigin: 'https://internal-alb.amazonaws.com',
+    });
+
+    template = Template.fromStack(stack);
+  });
+
+  test('API Gateway has endpoint type PRIVATE', () => {
+    template.hasResourceProperties('AWS::ApiGateway::RestApi', {
+      EndpointConfiguration: {
+        Types: ['PRIVATE'],
+      },
+    });
+  });
+
+  test('resource policy contains Deny with StringNotEquals on aws:sourceVpce', () => {
+    template.hasResourceProperties('AWS::ApiGateway::RestApi', {
+      Policy: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Effect: 'Deny',
+            Condition: {
+              StringNotEquals: {
+                'aws:sourceVpce': 'vpce-12345',
+              },
+            },
+          }),
+        ]),
+      }),
+    });
+  });
+
+  test('resource policy contains Allow with StringEquals on aws:sourceVpce', () => {
+    template.hasResourceProperties('AWS::ApiGateway::RestApi', {
+      Policy: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Effect: 'Allow',
+            Condition: {
+              StringEquals: {
+                'aws:sourceVpce': 'vpce-12345',
+              },
+            },
+          }),
+        ]),
+      }),
+    });
+  });
+
+  test('Lambda functions are placed in VPC with security groups', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      VpcConfig: {
+        SubnetIds: Match.anyValue(),
+        SecurityGroupIds: Match.anyValue(),
+      },
+    });
   });
 });

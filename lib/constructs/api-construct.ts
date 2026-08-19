@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib/core';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -19,6 +20,14 @@ export interface ApiConstructProps {
   stagingBucket?: string;
   /** Cognito User Pool for API authorization */
   userPool?: cognito.IUserPool;
+  /** VPC for Lambda placement */
+  vpc?: ec2.IVpc;
+  /** Security group for Lambda functions */
+  lambdaSecurityGroup?: ec2.ISecurityGroup;
+  /** VPC Endpoint ID for execute-api (required for private API) */
+  vpcEndpointId?: string;
+  /** Allowed CORS origin (internal ALB URL) */
+  allowedOrigin?: string;
 }
 
 /**
@@ -37,15 +46,56 @@ export class ApiConstruct extends Construct {
       ? ['Content-Type', 'Authorization']
       : ['Content-Type'];
 
-    // Create REST API with CORS enabled
+    // Determine CORS allowed origins
+    const allowOrigins = props.allowedOrigin
+      ? [props.allowedOrigin]
+      : apigateway.Cors.ALL_ORIGINS;
+
+    // Build optional VPC networking props for Lambda functions
+    const vpcProps = props.vpc && props.lambdaSecurityGroup
+      ? { vpc: props.vpc, securityGroups: [props.lambdaSecurityGroup] }
+      : {};
+
+    // Create REST API with CORS enabled; configure as private when vpcEndpointId is provided
     this.api = new apigateway.RestApi(this, 'RestoreApi', {
       restApiName: 'GlacierRestoreApi',
       description: 'API for Glacier restore and DataSync transfer requests',
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowOrigins,
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders,
       },
+      ...(props.vpcEndpointId
+        ? {
+            endpointTypes: [apigateway.EndpointType.PRIVATE],
+            policy: new iam.PolicyDocument({
+              statements: [
+                new iam.PolicyStatement({
+                  effect: iam.Effect.ALLOW,
+                  principals: [new iam.AnyPrincipal()],
+                  actions: ['execute-api:Invoke'],
+                  resources: ['execute-api:/*'],
+                  conditions: {
+                    StringEquals: {
+                      'aws:sourceVpce': props.vpcEndpointId,
+                    },
+                  },
+                }),
+                new iam.PolicyStatement({
+                  effect: iam.Effect.DENY,
+                  principals: [new iam.AnyPrincipal()],
+                  actions: ['execute-api:Invoke'],
+                  resources: ['execute-api:/*'],
+                  conditions: {
+                    StringNotEquals: {
+                      'aws:sourceVpce': props.vpcEndpointId,
+                    },
+                  },
+                }),
+              ],
+            }),
+          }
+        : {}),
     });
 
     // Create Cognito authorizer if a User Pool is provided
@@ -76,6 +126,7 @@ export class ApiConstruct extends Construct {
         sourceMap: true,
         forceDockerBundling: false,
       },
+      ...vpcProps,
     });
 
     // --- Get Requests Handler (GET /requests) ---
@@ -93,6 +144,7 @@ export class ApiConstruct extends Construct {
         sourceMap: true,
         forceDockerBundling: false,
       },
+      ...vpcProps,
     });
 
     // --- Get DataSync Destinations Handler (GET /datasync-destinations) ---
@@ -108,6 +160,7 @@ export class ApiConstruct extends Construct {
         sourceMap: true,
         forceDockerBundling: false,
       },
+      ...vpcProps,
     });
 
     // DataSync ListLocations permission for destinations handler
@@ -132,6 +185,7 @@ export class ApiConstruct extends Construct {
         sourceMap: true,
         forceDockerBundling: false,
       },
+      ...vpcProps,
     });
 
     // --- IAM Permissions ---
@@ -195,6 +249,7 @@ export class ApiConstruct extends Construct {
           sourceMap: true,
           forceDockerBundling: false,
         },
+        ...vpcProps,
       });
 
       props.table.grantReadData(getManifestUrlFn);

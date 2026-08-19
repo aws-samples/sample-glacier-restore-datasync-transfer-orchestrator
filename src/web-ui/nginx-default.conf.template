@@ -1,0 +1,49 @@
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Amazon-provided VPC DNS resolver. Because the container runs inside the
+    # VPC and the execute-api interface endpoint has private DNS enabled, this
+    # resolves the private API Gateway hostname to the VPC endpoint IPs.
+    resolver 169.254.169.253 valid=30s ipv6=off;
+
+    # Never cache the runtime config or the app shell — they change on each
+    # deployment and stale copies point the browser at the wrong API URL.
+    location = /config.js {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        expires -1;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        expires -1;
+    }
+
+    # Serve the static single-page app.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Reverse-proxy API calls to the Private API Gateway through the VPC endpoint.
+    # The browser calls the ALB at the same origin (/api/...), avoiding any need
+    # for the client workstation to resolve or reach the private execute-api
+    # endpoint directly. Requests originate from within the VPC, satisfying the
+    # API Gateway resource policy (aws:sourceVpce).
+    location /api/ {
+        # Using a variable forces runtime DNS resolution via the resolver above.
+        set $api_upstream "__API_HOST__";
+
+        # Rewrite /api/<path> to /<stage>/<path> for the API Gateway stage.
+        rewrite ^/api/(.*)$ /__API_STAGE__/$1 break;
+
+        proxy_pass https://$api_upstream;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $api_upstream;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

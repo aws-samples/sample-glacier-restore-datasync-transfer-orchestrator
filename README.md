@@ -8,13 +8,16 @@ An AWS CDK application that orchestrates S3 Glacier restores and DataSync transf
 
 ![Architecture Diagram](docs/glacier-restore-transfer-arch.png)
 
-The stack deploys five main components:
+The stack deploys six main components:
 
+- **VPC Network** — VPC with private subnets, NAT Gateway, and VPC Endpoints for private AWS service connectivity (supports bring-your-own-VPC or auto-provisioning)
 - **Persistence** — DynamoDB table for tracking restore request state with status timeline
-- **Orchestrator** — Durable Lambda function that manages the multi-step restore workflow (detect storage class → initiate restore → monitor restore → start DataSync → monitor DataSync)
+- **Orchestrator** — Durable Lambda function (VPC-placed) that manages the multi-step restore workflow (detect storage class → initiate restore → monitor restore → start DataSync → monitor DataSync)
 - **Auth** — Amazon Cognito User Pool with hosted UI for user authentication (authorization code grant with PKCE)
-- **API** — REST API Gateway with Lambda integrations and Cognito authorizer for submitting requests and checking status
-- **Web UI** — S3 + CloudFront static site for interacting with the API, with integrated Cognito login flow
+- **API** — Private REST API Gateway with Lambda integrations (VPC-placed) and Cognito authorizer, accessible only from within the VPC via VPC Endpoint
+- **Web UI** — ECS Fargate service running nginx behind an internal ALB with HTTPS, serving the static web UI within the VPC
+
+> **Network access:** This application is entirely VPC-private. There are no public-facing endpoints. Users must access the web UI from a VPC-connected workstation (e.g., via VPN, AWS Direct Connect, or a bastion host within the VPC).
 
 ### Orchestrator workflow
 
@@ -32,7 +35,9 @@ The orchestrator handles each request intelligently:
 - [Node.js](https://nodejs.org/) >= 18.x
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with appropriate credentials
 - [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/cli.html) v2 (`npm install -g aws-cdk`)
-- An AWS account with permissions to create Lambda, API Gateway, DynamoDB, S3, CloudFront, Cognito, and DataSync resources
+- An AWS account with permissions to create Lambda, API Gateway, DynamoDB, S3, ECS, ELB, EC2 (VPC), Cognito, and DataSync resources
+- An ACM certificate in the deployment region (for HTTPS on the internal ALB)
+- (Optional) An existing VPC with at least 2 private subnets in separate AZs and NAT Gateway routing configured
 - (Optional) A pre-configured AWS DataSync task (source S3 → destination NFS/S3)
 - (Optional) An S3 bucket for staging batch operation manifests and DataSync manifests
 - (Optional) An IAM role for S3 Batch Operations
@@ -56,6 +61,9 @@ The stack uses environment variables to configure deployment. Set these before d
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `ENV` | Target environment (`dev` or `prod`). Defaults to `dev`. | No |
+| `CERTIFICATE_ARN` | ACM certificate ARN for the internal ALB HTTPS listener. Must be in the same region as the deployment. | Yes |
+| `EXISTING_VPC_ID` | Existing VPC ID to use. When absent/empty, the stack creates a new VPC with private subnets and NAT Gateway. | No |
+| `APP_URL` | Public URL users access the web UI through (e.g. `https://restore-tool.internal`). Used for Cognito callback/logout URLs and the front-end redirect URIs. When absent, the internal ALB DNS name is used. | No |
 | `DATASYNC_TASK_ARN` | Default/fallback DataSync task ARN, used when a request does not specify a destination | No |
 | `STAGING_BUCKET` | S3 bucket name for batch and DataSync manifests | Yes |
 | `CDK_DEFAULT_ACCOUNT` | AWS account ID for deployment | Yes |
@@ -69,6 +77,8 @@ Example:
 
 ```bash
 export ENV=dev
+export CERTIFICATE_ARN=arn:aws:acm:us-west-2:123456789012:certificate/abc12345-6789-0abc-def0-123456789012
+export EXISTING_VPC_ID=  # Leave empty to create a new VPC, or set to an existing VPC ID
 export DATASYNC_TASK_ARN=arn:aws:datasync:us-west-2:123456789012:task/task-abc123  # optional fallback
 export STAGING_BUCKET=my-staging-bucket
 export CDK_DEFAULT_ACCOUNT=123456789012
@@ -76,6 +86,165 @@ export CDK_DEFAULT_REGION=us-west-2
 export BATCH_ROLE_ARN=arn:aws:iam::123456789012:role/S3BatchOperationsRole
 export DATASYNC_S3_ROLE_ARN=arn:aws:iam::123456789012:role/DataSyncS3Role
 ```
+
+### ACM certificate
+
+The internal ALB requires an ACM certificate for HTTPS termination. This is needed because the Cognito PKCE auth flow requires HTTPS callback URLs, and it encrypts traffic between the user's workstation and the ALB.
+
+#### Option A: Self-signed certificate (simplest, no public domain needed)
+
+This is the quickest path for internal tools. You generate a self-signed certificate, import it into ACM, and use it on the ALB. Browsers will show a security warning that users click through (acceptable for an internal tool with a known user base).
+
+**1. Generate a self-signed certificate:**
+
+```bash
+# Create a private key
+openssl genrsa -out alb-key.pem 2048
+
+# Generate a self-signed certificate (valid for 365 days)
+# Use any domain — it doesn't need to be real
+openssl req -new -x509 -key alb-key.pem -out alb-cert.pem -days 365 \
+  -subj "/CN=restore-tool.internal"
+```
+
+**2. Import into ACM:**
+
+```bash
+CERTIFICATE_ARN=$(aws acm import-certificate \
+  --certificate fileb://alb-cert.pem \
+  --private-key fileb://alb-key.pem \
+  --region us-west-2 \
+  --query "CertificateArn" --output text)
+
+echo "Certificate ARN: $CERTIFICATE_ARN"
+export CERTIFICATE_ARN
+```
+
+**3. Deploy the stack:**
+
+```bash
+cdk deploy RestoreTransferStack
+```
+
+**4. Access the app:**
+
+Navigate to `https://<AlbDnsName>` from a VPC-connected workstation. Your browser will warn about the self-signed certificate — click through to proceed.
+
+> **Renewal:** Imported certificates do not auto-renew. Before the cert expires (365 days), regenerate and re-import using `aws acm import-certificate --certificate-arn <existing-arn>` with the new cert files, then redeploy.
+
+> **Suppress browser warnings (optional):** Install `alb-cert.pem` as a trusted CA certificate on client machines. On macOS: add it to Keychain Access and mark as "Always Trust". On Windows: import into "Trusted Root Certification Authorities". After this, browsers will accept the certificate without warnings.
+
+#### Option B: ACM public certificate (requires a public domain you control)
+
+If you own a public domain (e.g., `example.com`), you can issue a free, auto-renewing ACM public certificate. This avoids browser warnings since ACM public certs are trusted by all browsers.
+
+**1. Request the certificate:**
+
+```bash
+CERTIFICATE_ARN=$(aws acm request-certificate \
+  --domain-name "restore-tool.internal.example.com" \
+  --validation-method DNS \
+  --region us-west-2 \
+  --query "CertificateArn" --output text)
+```
+
+**2. Validate via public DNS.** Add the ACM-provided CNAME record to your **public** hosted zone for `example.com`:
+
+```bash
+# Get the validation record
+aws acm describe-certificate \
+  --certificate-arn $CERTIFICATE_ARN \
+  --query "Certificate.DomainValidationOptions[0].ResourceRecord"
+
+# Add the CNAME to your public hosted zone (Route 53 example)
+aws route53 change-resource-record-sets \
+  --hosted-zone-id <PUBLIC_HOSTED_ZONE_ID> \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "<VALIDATION_NAME>",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "<VALIDATION_VALUE>"}]
+      }
+    }]
+  }'
+
+# Wait for validation (5–30 minutes)
+aws acm wait certificate-validated --certificate-arn $CERTIFICATE_ARN
+```
+
+**3. Deploy the stack** with `export CERTIFICATE_ARN` set, then **create a private hosted zone** so VPC clients resolve the domain to the ALB:
+
+```bash
+ALB_DNS=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
+  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text)
+
+# Create private hosted zone
+ZONE_ID=$(aws route53 create-hosted-zone \
+  --name "internal.example.com" \
+  --caller-reference "$(date +%s)" \
+  --vpc VPCRegion=us-west-2,VPCId=<YOUR_VPC_ID> \
+  --hosted-zone-config PrivateZone=true \
+  --query "HostedZone.Id" --output text)
+
+# Point the domain at the ALB
+aws route53 change-resource-record-sets \
+  --hosted-zone-id $ZONE_ID \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "restore-tool.internal.example.com",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "'$ALB_DNS'"}]
+      }
+    }]
+  }'
+```
+
+Users access the app at `https://restore-tool.internal.example.com` with no browser warnings.
+
+
+### Using an existing VPC
+
+If your organization has a shared VPC (e.g., connected via Transit Gateway or Direct Connect), set `EXISTING_VPC_ID` to reuse it:
+
+```bash
+export EXISTING_VPC_ID=vpc-0abc1234def56789a
+```
+
+Both the `RestoreTransferStack` and `RestoreTransferTestingStack` read this variable. When set, both stacks deploy into the same VPC, eliminating the need for VPC peering between them.
+
+Requirements for the existing VPC:
+- At least 2 private subnets in separate Availability Zones (for `RestoreTransferStack`)
+- At least 1 public subnet (for the testing stack's EC2 instances — NFS server and DataSync agents)
+- NAT Gateway routing configured for outbound internet access from private subnets
+- Gateway VPC Endpoints for S3 and DynamoDB should already exist (the stack skips creating them for existing VPCs to avoid conflicts)
+- The `RestoreTransferStack` will still create interface VPC Endpoints (execute-api, lambda, logs, monitoring, sts) and security groups within the provided VPC
+
+### Access URL and Cognito redirects (`APP_URL`)
+
+The web UI is fronted by an internal ALB. By default, the Cognito callback/logout URLs and the front-end redirect URIs are set to the ALB's own DNS name. That works only if your workstation can both **resolve** and **reach** the ALB DNS name.
+
+In many private networks the ALB DNS name does not resolve from client machines: internal ALB names are published in public DNS but point to private IPs (`10.x.x.x`), and corporate resolvers/VPNs frequently drop those answers (DNS-rebinding protection) or don't forward `amazonaws.com` lookups. In that case you access the app through a custom domain instead (e.g. `restore-tool.internal`), typically via a Route 53 private hosted zone or a local hosts entry.
+
+When you access the app through a custom domain, set `APP_URL` to that domain so authentication works correctly:
+
+```bash
+export APP_URL=https://restore-tool.internal
+```
+
+`APP_URL` controls:
+- The Cognito User Pool Client **callback and logout URLs** (so Cognito redirects the browser back to a URL it can resolve and that matches the TLS certificate)
+- The `redirectUri` / `logoutUri` injected into the container's `config.js`
+- The API Gateway CORS allowed origin
+
+If `APP_URL` is omitted, the stack falls back to the internal ALB DNS name (original behavior). The value should match the domain on your ACM certificate — otherwise the browser shows a certificate name mismatch.
+
+> **Tip:** The custom domain must resolve to the ALB from the client. The durable option is a Route 53 private hosted zone for the domain with an alias record to the ALB, with your VPN using the VPC resolver. For quick testing, a hosts-file entry pointing the domain at an ALB private IP works, but ALB node IPs can change over time.
 
 ## Deployment
 
@@ -93,13 +262,15 @@ If you don't already have a DataSync task, staging bucket, S3 Batch Operations r
 
 The testing stack creates:
 
-- VPC with public subnet
+- VPC with public subnet (or uses an existing VPC if `EXISTING_VPC_ID` is set)
 - Source S3 bucket (with Glacier lifecycle rule)
 - Staging S3 bucket
 - NFS server EC2 instance
 - DataSync agent EC2 instance
 - DataSync task, locations, and IAM roles
 - S3 Batch Operations role
+
+> **Shared VPC:** If you set `EXISTING_VPC_ID`, both the testing stack and the main `RestoreTransferStack` deploy into the same VPC. This avoids needing VPC peering between two separate VPCs. The existing VPC must have at least one public subnet (for the DataSync agent and NFS server instances).
 
 #### Two-phase deployment
 
@@ -108,23 +279,42 @@ The testing stack creates:
 ```bash
 export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 export CDK_DEFAULT_REGION=us-west-2
+# Optional: export EXISTING_VPC_ID=vpc-xxx to share a VPC with RestoreTransferStack
 
 cdk deploy RestoreTransferTestingStack \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
 
-**Phase 2** — Activate the DataSync agent, then redeploy:
+**Phase 2** — Activate the DataSync agents, then redeploy:
+
+**Basic mode agent** — activate via curl (port 80):
 
 ```bash
-# Get the activation key (use the agent public IP from Phase 1 outputs)
-curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&redirect_type=TEXT"
+# Get the Basic mode activation key (use the agent public IP from Phase 1 outputs)
+curl -v "http://<basic-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&redirect_type=TEXT"
 # The activation key is in the Location header of the 302 response
+```
 
-# Redeploy with the key
+**Enhanced mode agent** — activate via the DataSync console (the v3 agent does not support curl-based activation):
+
+1. Open the [DataSync console](https://console.aws.amazon.com/datasync/) → **Agents** → **Create agent**
+2. For **Service endpoint**, choose **Public service endpoints**
+3. For **Activation key**, choose **Automatically get the activation key from your agent**
+4. Enter the Enhanced agent's public IP (from Phase 1 outputs: `DataSyncEnhancedAgentPublicIp`)
+5. Click **Get key** — the console will retrieve the key via your browser's connection to the agent on port 80
+6. Copy the activation key from the page (you'll cancel out of the console wizard — we just need the key)
+
+Alternatively, use SSM Session Manager to connect to the Enhanced agent instance and retrieve the key from the agent's local console menu.
+
+```bash
+# Redeploy with the key(s)
 cdk deploy RestoreTransferTestingStack \
   --parameters ActivationKey=XXXXX-XXXXX-XXXXX-XXXXX-XXXXX \
+  --parameters EnhancedActivationKey=YYYYY-YYYYY-YYYYY-YYYYY-YYYYY \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
+
+> **Note:** The Enhanced agent activation is optional. If you only need Basic mode DataSync tasks, omit `EnhancedActivationKey`. The Enhanced mode task and its resources are only created when both activation keys are provided.
 
 #### Set environment variables from testing stack outputs
 
@@ -142,7 +332,13 @@ export DATASYNC_S3_ROLE_ARN=$(aws cloudformation describe-stacks --stack-name Re
 cdk deploy RestoreTransferStack
 ```
 
-The deploy command will output the API endpoint URL, the Web UI CloudFront URL, and the Cognito User Pool ID.
+The deploy command will output:
+- `ApiEndpoint` — The Private API Gateway URL (accessible only from within the VPC)
+- `AlbDnsName` — The internal ALB DNS name (use this to access the web UI from a VPC-connected workstation)
+- `CognitoUserPoolId` — The Cognito User Pool ID
+- `CognitoClientId` — The Cognito User Pool Client ID
+
+> **Accessing the application:** Since the ALB is internal (no public IP), you must access the web UI from a machine connected to the VPC — for example, via AWS VPN Client, AWS Direct Connect, a bastion host, or AWS Cloud9 within the VPC. Navigate to your access URL in the browser: `https://<AlbDnsName>` if you can resolve/reach the ALB name directly, or your custom domain (e.g. `https://restore-tool.internal`) if you set [`APP_URL`](#access-url-and-cognito-redirects-app_url). The access URL must match your ACM certificate and the configured `APP_URL`, otherwise Cognito login will fail to redirect back.
 
 ### Post-deployment: create a Cognito user
 
@@ -213,7 +409,9 @@ Once the testing stack and main stack are deployed, you can submit a restore-and
 
 ### 1. Log in
 
-Open the Web UI URL from the stack outputs (`WebUiUrl`). You'll be redirected to the Cognito hosted login page. Sign in with the user you created in the [post-deployment step](#post-deployment-create-a-cognito-user).
+Open the Web UI by navigating to your access URL in a browser on a VPC-connected workstation — `https://<AlbDnsName>` from the stack outputs, or your custom domain (e.g. `https://restore-tool.internal`) if you set [`APP_URL`](#access-url-and-cognito-redirects-app_url). You'll be redirected to the Cognito hosted login page. Sign in with the user you created in the [post-deployment step](#post-deployment-create-a-cognito-user).
+
+> **If the Cognito redirect hangs after login:** the app is likely redirecting to a URL your browser can't resolve (usually the raw ALB DNS name). Set `APP_URL` to the domain you actually access the app through and redeploy — see [Access URL and Cognito redirects](#access-url-and-cognito-redirects-app_url).
 
 ![Amazon Cognito login window](docs/cognito-signin.png)
 
@@ -307,7 +505,7 @@ cdk diff
 
 ### Local UI development
 
-Serve the web UI locally and point it at the deployed API and Cognito:
+The web UI is now served from a container inside the VPC. For local development, you can run the container locally with Docker:
 
 ```bash
 # Build config from stack outputs
@@ -317,12 +515,27 @@ USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name RestoreTransferSt
   --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolId'].OutputValue" --output text)
 CLIENT_ID=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
   --query "Stacks[0].Outputs[?OutputKey=='CognitoClientId'].OutputValue" --output text)
-WEB_UI_URL=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
-  --query "Stacks[0].Outputs[?OutputKey=='WebUiUrl'].OutputValue" --output text) \
+ALB_DNS=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
+  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text)
 COGNITO_DOMAIN=$(aws cognito-idp describe-user-pool \
   --user-pool-id "$USER_POOL_ID" \
   --query "UserPool.Domain" --output text)
 
+# Run the container locally
+docker build -t restore-ui src/web-ui/
+docker run -p 8080:80 \
+  -e API_URL="${API_URL%/}" \
+  -e COGNITO_USER_POOL_ID="$USER_POOL_ID" \
+  -e COGNITO_CLIENT_ID="$CLIENT_ID" \
+  -e COGNITO_DOMAIN="https://${COGNITO_DOMAIN}.auth.${CDK_DEFAULT_REGION}.amazoncognito.com" \
+  -e REDIRECT_URI="http://localhost:8080" \
+  -e LOGOUT_URI="http://localhost:8080" \
+  restore-ui
+```
+
+Alternatively, serve the static files directly:
+
+```bash
 cat > src/web-ui/config.js << EOF
 window.__CONFIG__ = {
   "apiUrl": "${API_URL%/}",
@@ -336,11 +549,10 @@ window.__CONFIG__ = {
 };
 EOF
 
-# Serve locally
 python3 -m http.server 8080 --directory src/web-ui
 ```
 
-> **Note:** For local development, you must add `http://localhost:8080` to the Cognito User Pool Client's allowed callback and logout URLs in the AWS Console (or update the CDK code to include it).
+> **Note:** For local development, you must add `http://localhost:8080` to the Cognito User Pool Client's allowed callback and logout URLs in the AWS Console. The Private API Gateway is only reachable from within the VPC — local API calls will fail unless you're connected to the VPC (e.g., via VPN).
 
 ## Project structure
 
@@ -349,11 +561,12 @@ python3 -m http.server 8080 --directory src/web-ui
 ├── lib/
 │   ├── config/                         # Environment configuration
 │   ├── constructs/                     # CDK construct definitions
-│   │   ├── api-construct.ts            # REST API with Cognito authorizer
+│   │   ├── api-construct.ts            # Private REST API with Cognito authorizer
 │   │   ├── auth-construct.ts           # Cognito User Pool, Client & Hosted UI
-│   │   ├── orchestrator-construct.ts   # Durable workflow Lambda
+│   │   ├── orchestrator-construct.ts   # Durable workflow Lambda (VPC-placed)
 │   │   ├── persistence-construct.ts    # DynamoDB table
-│   │   └── web-ui-construct.ts         # S3 + CloudFront with auth config
+│   │   ├── vpc-construct.ts            # VPC, subnets, NAT, VPC Endpoints, SGs
+│   │   └── vpc-web-ui-construct.ts     # ECS Fargate + internal ALB (HTTPS)
 │   ├── restore-transfer-stack.ts       # Main application stack
 │   └── testing-infrastructure-stack.ts # Optional test infrastructure
 ├── scripts/                            # Helper scripts (test data upload)
@@ -361,7 +574,7 @@ python3 -m http.server 8080 --directory src/web-ui
 │   ├── api/                            # API Lambda handlers
 │   ├── orchestrator/                   # Durable workflow Lambda + steps
 │   ├── shared/                         # Shared types, constants, validation
-│   └── web-ui/                         # Static web UI assets (with Cognito login)
+│   └── web-ui/                         # Web UI (Dockerfile, static assets, entrypoint)
 └── test/                               # Unit tests
 ```
 

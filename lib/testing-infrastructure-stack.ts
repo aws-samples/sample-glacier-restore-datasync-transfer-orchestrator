@@ -84,17 +84,23 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
 
     // ─── VPC ───────────────────────────────────────────────────────────
-    const vpc = new ec2.Vpc(this, 'TestVpc', {
-      maxAzs: 1,
-      natGateways: 0,
-      subnetConfiguration: [
-        {
-          name: 'Public',
-          subnetType: ec2.SubnetType.PUBLIC,
-          cidrMask: 24,
-        },
-      ],
-    });
+    // Use an existing VPC if provided via EXISTING_VPC_ID env var, otherwise create a new one.
+    // Sharing a VPC with RestoreTransferStack avoids the need for VPC peering.
+    const existingVpcId = process.env.EXISTING_VPC_ID || undefined;
+
+    const vpc = existingVpcId
+      ? ec2.Vpc.fromLookup(this, 'TestVpc', { vpcId: existingVpcId })
+      : new ec2.Vpc(this, 'TestVpc', {
+          maxAzs: 1,
+          natGateways: 0,
+          subnetConfiguration: [
+            {
+              name: 'Public',
+              subnetType: ec2.SubnetType.PUBLIC,
+              cidrMask: 24,
+            },
+          ],
+        });
 
     // ─── Security Groups ───────────────────────────────────────────────
     const nfsSg = new ec2.SecurityGroup(this, 'NfsSecurityGroup', {

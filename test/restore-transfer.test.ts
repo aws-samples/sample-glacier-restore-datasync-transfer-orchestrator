@@ -30,11 +30,9 @@ describe('RestoreTransferStack', () => {
     });
   });
 
-  test('creates CloudFront distribution', () => {
-    template.hasResourceProperties('AWS::CloudFront::Distribution', {
-      DistributionConfig: {
-        DefaultRootObject: 'index.html',
-      },
+  test('creates internal ALB for web UI', () => {
+    template.hasResourceProperties('AWS::ElasticLoadBalancingV2::LoadBalancer', {
+      Scheme: 'internal',
     });
   });
 
@@ -51,8 +49,8 @@ describe('RestoreTransferStack', () => {
     expect(Object.keys(outputs).length).toBe(1);
   });
 
-  test('exports WebUiUrl output', () => {
-    const outputs = template.findOutputs('WebUiUrl');
+  test('exports AlbDnsName output', () => {
+    const outputs = template.findOutputs('AlbDnsName');
     expect(Object.keys(outputs).length).toBe(1);
   });
 });
