@@ -510,8 +510,8 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'EnhancedAgentActivationCommand', {
-      value: `DataSync console → Agents → Create agent → use IP ${enhancedAgentInstance.instancePublicIp} to auto-fetch the Enhanced mode activation key (curl-based activation is not supported for Enhanced mode agents)`,
-      description: 'Follow this after Phase 1 deploy to get the Enhanced mode activation key — see README Phase 2 for console steps',
+      value: `curl -v "http://${enhancedAgentInstance.instancePublicIp}/?gatewayType=SYNC_ENHANCED&activationRegion=${this.region}&no_redirect"`,
+      description: 'Run this after Phase 1 deploy to get the Enhanced mode activation key',
     });
   }
 }

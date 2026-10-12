@@ -289,24 +289,17 @@ cdk deploy RestoreTransferTestingStack \
 
 **Phase 2** — Activate the DataSync agents, then redeploy:
 
-**Basic mode agent** — activate via curl (port 80):
+Both agents activate the same way via curl (port 80) — only the `gatewayType` differs:
 
 ```bash
 # Get the Basic mode activation key (use DataSyncAgentPublicIp from Phase 1 outputs)
 curl -v "http://<basic-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
+
+# Get the Enhanced mode activation key (use DataSyncEnhancedAgentPublicIp from Phase 1 outputs)
+curl -v "http://<enhanced-agent-public-ip>/?gatewayType=SYNC_ENHANCED&activationRegion=us-west-2&no_redirect"
+
 # The activation key is returned directly in the response body
 ```
-
-**Enhanced mode agent** — activate via the DataSync console (the v3 agent does not support curl-based activation):
-
-1. Open the [DataSync console](https://console.aws.amazon.com/datasync/) → **Agents** → **Create agent**
-2. For **Service endpoint**, choose **Public service endpoints**
-3. For **Activation key**, choose **Automatically get the activation key from your agent**
-4. Enter the Enhanced agent's public IP (from Phase 1 outputs: `DataSyncEnhancedAgentPublicIp`)
-5. Click **Get key** — the console will retrieve the key via your browser's connection to the agent on port 80
-6. Copy the activation key from the page (you'll cancel out of the console wizard — we just need the key)
-
-Alternatively, use SSM Session Manager to connect to the Enhanced agent instance and retrieve the key from the agent's local console menu.
 
 ```bash
 # Redeploy with the key(s)
@@ -316,7 +309,7 @@ cdk deploy RestoreTransferTestingStack \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
 
-> **Note:** The Enhanced agent activation is optional. If you only need Basic mode DataSync tasks, omit `EnhancedActivationKey`. The Enhanced mode task and its resources are only created when both activation keys are provided. The `AgentActivationCommand` stack output from Phase 1 already contains the correct `curl` command for the Basic mode agent, pre-filled with its public IP and region.
+> **Note:** The Enhanced agent activation is optional. If you only need Basic mode DataSync tasks, omit `EnhancedActivationKey`. The Enhanced mode task and its resources are only created when both activation keys are provided. The `AgentActivationCommand` and `EnhancedAgentActivationCommand` stack outputs from Phase 1 already contain the correct `curl` command for each agent, pre-filled with its public IP and region.
 
 #### Set environment variables from testing stack outputs
 
