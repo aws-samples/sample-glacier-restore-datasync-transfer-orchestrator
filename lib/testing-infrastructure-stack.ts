@@ -27,8 +27,11 @@ import { Construct } from 'constructs';
  *   npx cdk deploy RestoreTransferTestingStack
  *
  * Phase 2 — Get the activation key from the agent, then redeploy:
- *   curl "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=<region>&redirect_type=TEXT"
+ *   curl "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=<region>&no_redirect"
  *   npx cdk deploy RestoreTransferTestingStack --parameters ActivationKey=<key>
+ *
+ * The same pattern applies to the Enhanced mode agent, using
+ * gatewayType=SYNC_ENHANCED and the enhanced agent's public IP.
  */
 export class TestingInfrastructureStack extends cdk.Stack {
   /** ARN of the DataSync task (Basic mode) */
@@ -491,7 +494,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'AgentActivationCommand', {
-      value: `curl -v "http://${agentInstance.instancePublicIp}/?gatewayType=SYNC&activationRegion=${this.region}&redirect_type=TEXT"`,
+      value: `curl -v "http://${agentInstance.instancePublicIp}/?gatewayType=SYNC&activationRegion=${this.region}&no_redirect"`,
       description: 'Run this after Phase 1 deploy to get the Basic mode activation key',
     });
 
@@ -501,7 +504,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'EnhancedAgentActivationCommand', {
-      value: `curl -v "http://${enhancedAgentInstance.instancePublicIp}/?gatewayType=SYNC_ENHANCED&activationRegion=${this.region}&redirect_type=TEXT"`,
+      value: `curl -v "http://${enhancedAgentInstance.instancePublicIp}/?gatewayType=SYNC_ENHANCED&activationRegion=${this.region}&no_redirect"`,
       description: 'Run this after Phase 1 deploy to get the Enhanced mode activation key',
     });
   }

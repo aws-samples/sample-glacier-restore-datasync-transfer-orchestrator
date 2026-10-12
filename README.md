@@ -113,18 +113,29 @@ cdk deploy RestoreTransferTestingStack \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
 
-**Phase 2** — Activate the DataSync agent, then redeploy:
+*Note*: You may need to wait a few minutes after the initial deploy for the DataSync agent to become available to activate.
+
+**Phase 2** — Activate the DataSync agent(s), then redeploy:
+
+The testing stack provisions both a Basic mode agent (`DataSyncAgentPublicIp`) and an Enhanced mode agent (`DataSyncEnhancedAgentPublicIp`). Activate whichever you need — the Enhanced mode agent requires the Basic mode agent to also be activated in the same deploy.
 
 ```bash
-# Get the activation key (use the agent public IP from Phase 1 outputs)
-curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&redirect_type=TEXT"
-# The activation key is in the Location header of the 302 response
+# Get the Basic mode activation key (use DataSyncAgentPublicIp from Phase 1 outputs)
+curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
 
-# Redeploy with the key
+# Get the Enhanced mode activation key (use DataSyncEnhancedAgentPublicIp from Phase 1 outputs)
+curl -v "http://<enhanced-agent-public-ip>/?gatewayType=SYNC_ENHANCED&activationRegion=us-west-2&no_redirect"
+
+# The activation key is returned directly in the response body
+
+# Redeploy with the key(s)
 cdk deploy RestoreTransferTestingStack \
   --parameters ActivationKey=XXXXX-XXXXX-XXXXX-XXXXX-XXXXX \
+  --parameters EnhancedActivationKey=YYYYY-YYYYY-YYYYY-YYYYY-YYYYY \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
+
+> The `AgentActivationCommand` and `EnhancedAgentActivationCommand` stack outputs from Phase 1 already contain the correct `curl` command for each agent, pre-filled with its public IP and region.
 
 #### Set environment variables from testing stack outputs
 
@@ -165,13 +176,6 @@ aws cognito-idp admin-set-user-password \
 ```
 
 The User Pool ID and Client ID are available in the stack outputs (`CognitoUserPoolId` and `CognitoClientId`).
-
-### Deploy to a specific environment
-
-```bash
-# Deploy to production
-ENV=prod cdk deploy RestoreTransferStack
-```
 
 ## Upload test data
 
