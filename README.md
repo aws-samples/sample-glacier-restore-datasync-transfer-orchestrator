@@ -285,14 +285,16 @@ cdk deploy RestoreTransferTestingStack \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
 
+*Note*: You may need to wait a few minutes after the initial deploy for the DataSync agent to become available to activate.
+
 **Phase 2** — Activate the DataSync agents, then redeploy:
 
 **Basic mode agent** — activate via curl (port 80):
 
 ```bash
-# Get the Basic mode activation key (use the agent public IP from Phase 1 outputs)
-curl -v "http://<basic-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&redirect_type=TEXT"
-# The activation key is in the Location header of the 302 response
+# Get the Basic mode activation key (use DataSyncAgentPublicIp from Phase 1 outputs)
+curl -v "http://<basic-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
+# The activation key is returned directly in the response body
 ```
 
 **Enhanced mode agent** — activate via the DataSync console (the v3 agent does not support curl-based activation):
@@ -314,7 +316,7 @@ cdk deploy RestoreTransferTestingStack \
   --parameters ActivationCidr=$(curl -s ifconfig.me)/32
 ```
 
-> **Note:** The Enhanced agent activation is optional. If you only need Basic mode DataSync tasks, omit `EnhancedActivationKey`. The Enhanced mode task and its resources are only created when both activation keys are provided.
+> **Note:** The Enhanced agent activation is optional. If you only need Basic mode DataSync tasks, omit `EnhancedActivationKey`. The Enhanced mode task and its resources are only created when both activation keys are provided. The `AgentActivationCommand` stack output from Phase 1 already contains the correct `curl` command for the Basic mode agent, pre-filled with its public IP and region.
 
 #### Set environment variables from testing stack outputs
 
@@ -361,13 +363,6 @@ aws cognito-idp admin-set-user-password \
 ```
 
 The User Pool ID and Client ID are available in the stack outputs (`CognitoUserPoolId` and `CognitoClientId`).
-
-### Deploy to a specific environment
-
-```bash
-# Deploy to production
-ENV=prod cdk deploy RestoreTransferStack
-```
 
 ## Upload test data
 
