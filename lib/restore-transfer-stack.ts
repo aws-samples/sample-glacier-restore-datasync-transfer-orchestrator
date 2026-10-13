@@ -28,7 +28,9 @@ export class RestoreTransferStack extends cdk.Stack {
     // 3. Orchestrator — Durable Function Lambda for restore workflow
     const orchestrator = new OrchestratorConstruct(this, 'Orchestrator', {
       table: persistence.table,
-      dataSyncTaskArn: envConfig.dataSyncTaskArn,
+      // Optional fallback task ARN; empty string means "no fallback configured"
+      // (the orchestrator resolves a task dynamically per request destination).
+      dataSyncTaskArn: envConfig.dataSyncTaskArn ?? '',
       stagingBucket: envConfig.stagingBucket,
       accountId: envConfig.accountId,
       batchRoleArn: envConfig.batchRoleArn,

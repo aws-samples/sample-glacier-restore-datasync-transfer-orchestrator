@@ -1,5 +1,7 @@
 server {
-    listen 80;
+    # Unprivileged port — the container runs as the non-root `nginx` user and
+    # cannot bind ports below 1024. The ALB targets this port directly.
+    listen 8080;
     server_name _;
 
     root /usr/share/nginx/html;

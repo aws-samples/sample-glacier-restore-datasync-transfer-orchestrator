@@ -162,7 +162,7 @@ export class OrchestratorConstruct extends Construct {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['iam:CreateServiceLinkedRole'],
-        resources: ['arn:aws:iam::*:role/aws-service-role/datasync.amazonaws.com/*'],
+        resources: [`arn:aws:iam::${props.accountId}:role/aws-service-role/datasync.amazonaws.com/*`],
         conditions: {
           StringEquals: {
             'iam:AWSServiceName': 'datasync.amazonaws.com',

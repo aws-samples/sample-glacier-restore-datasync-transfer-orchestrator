@@ -256,6 +256,7 @@ export class ApiConstruct extends Construct {
 
       // Grant S3 read access for generating pre-signed URLs
       getManifestUrlFn.addToRolePolicy(new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
         actions: ['s3:GetObject'],
         resources: [`arn:aws:s3:::${props.stagingBucket}/manifests/*`],
       }));

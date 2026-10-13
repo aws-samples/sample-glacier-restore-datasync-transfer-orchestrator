@@ -58,13 +58,13 @@ export class VpcWebUiConstruct extends Construct {
 
     const albSecurityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
       vpc: props.vpc,
-      description: 'ALB security group - inbound 443 from VPC CIDR, outbound 80 to Fargate',
+      description: 'ALB security group - inbound 443 from VPC CIDR, outbound 8080 to Fargate',
       allowAllOutbound: false,
     });
 
     const fargateSecurityGroup = new ec2.SecurityGroup(this, 'FargateSecurityGroup', {
       vpc: props.vpc,
-      description: 'Fargate security group - inbound 80 from ALB, outbound 443 to internet',
+      description: 'Fargate security group - inbound 8080 from ALB, outbound 443 to internet',
       allowAllOutbound: false,
     });
 
@@ -75,17 +75,17 @@ export class VpcWebUiConstruct extends Construct {
       'Allow HTTPS inbound from VPC CIDR',
     );
 
-    // ALB SG: outbound 80 to Fargate SG only
+    // ALB SG: outbound 8080 to Fargate SG only
     albSecurityGroup.addEgressRule(
       fargateSecurityGroup,
-      ec2.Port.tcp(80),
+      ec2.Port.tcp(8080),
       'Allow HTTP outbound to Fargate tasks',
     );
 
-    // Fargate SG: inbound 80 from ALB SG only
+    // Fargate SG: inbound 8080 from ALB SG only
     fargateSecurityGroup.addIngressRule(
       albSecurityGroup,
-      ec2.Port.tcp(80),
+      ec2.Port.tcp(8080),
       'Allow HTTP inbound from ALB',
     );
 
@@ -141,7 +141,8 @@ export class VpcWebUiConstruct extends Construct {
     });
 
     container.addPortMappings({
-      containerPort: 80,
+      // Unprivileged port — the container runs as the non-root `nginx` user.
+      containerPort: 8080,
       protocol: ecs.Protocol.TCP,
     });
 
@@ -157,6 +158,13 @@ export class VpcWebUiConstruct extends Construct {
       // Enables `aws ecs execute-command` for in-container debugging (curl to the
       // private API, DNS checks, etc.). Uses the SSM channel over the VPC.
       enableExecuteCommand: true,
+      // Keep the full desired task count in service during deployments so the
+      // UI stays available while a new task set rolls out.
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+      // Fail (and roll back) a bad deployment quickly instead of waiting out
+      // the multi-hour default before ECS gives up.
+      circuitBreaker: { rollback: true },
     });
 
     // --- HTTPS Listener ---
@@ -174,7 +182,7 @@ export class VpcWebUiConstruct extends Construct {
     });
 
     httpsListener.addTargets('FargateTarget', {
-      port: 80,
+      port: 8080,
       targets: [this.service],
       healthCheck: {
         path: '/',

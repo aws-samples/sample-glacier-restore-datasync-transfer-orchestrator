@@ -12,7 +12,7 @@ This project is designed as an internal tool and sample architecture. It contain
 
 ### 1. Overly broad S3 IAM permissions (wildcard resources)
 
-**File:** `lib/constructs/orchestrator-construct.ts` (lines 86–96)
+**File:** `lib/constructs/orchestrator-construct.ts` (lines 100–118)
 
 **What:** The orchestrator Lambda has `s3:GetObject`, `s3:HeadObject`, and `s3:RestoreObject` permissions scoped to `arn:aws:s3:::*/*`, meaning it can read from and initiate Glacier restores on objects in **any** S3 bucket in the account.
 
@@ -73,6 +73,25 @@ Similarly, `s3:ListBucket` is scoped to `arn:aws:s3:::*` for glob pattern expans
 - Configure rate limiting, geo-restriction, and managed rule groups (e.g., AWSManagedRulesCommonRuleSet).
 - Enable WAF logging for audit and incident response.
 
+### 5. Testing infrastructure stack (testing-only)
+
+**File:** `lib/testing-infrastructure-stack.ts`
+
+**What:** The `RestoreTransferTestingStack` provisions prerequisite resources (DataSync task, NFS server, staging bucket, S3 Batch role, DataSync agent EC2 instance) used only for dev/test. It carries conveniences that are **deliberately not production-grade**:
+
+- The DataSync agent EC2 instance is granted `AmazonSSMManagedInstanceCore` so it can be reached via SSM Session Manager for debugging.
+- The S3 Batch Operations and DataSync S3 roles are scoped to the specific source/staging bucket ARNs, but exist to support ad-hoc testing.
+
+**Why this exists:** This stack is a convenience for standing up a working end-to-end test environment. It is deployed separately (`cdk deploy RestoreTransferTestingStack`) and is **not** part of the main application stack.
+
+**Risk:** The SSM access path and testing roles broaden the attack surface if this stack is deployed into a shared or production account.
+
+**Production hardening:**
+
+- Do **not** deploy `RestoreTransferTestingStack` to production. In production, point the main stack at pre-existing, independently governed DataSync tasks and buckets.
+- If an equivalent agent is needed in production, remove the SSM access and manage the host through your standard patch/access tooling.
+- Keep the DataSync S3 and S3 Batch role permissions scoped to the minimum the transfer requires (see "What's already secure" below for the current least-privilege posture).
+
 ---
 
 ## What's already secure
@@ -84,6 +103,10 @@ The following security controls are implemented:
 - **S3 access controls:** `BlockPublicAccess.BLOCK_ALL` on all S3 buckets; CloudFront uses Origin Access Control (OAC).
 - **Specific IAM actions:** No `Action: "*"` anywhere; all policies enumerate specific actions.
 - **IAM PassRole conditioning:** `iam:PassRole` is conditioned to specific services (`s3.amazonaws.com`, `datasync.amazonaws.com`).
+- **Account-scoped service-linked role creation:** `iam:CreateServiceLinkedRole` for DataSync is scoped to the deploying account's ARN (`arn:aws:iam::<account>:role/aws-service-role/datasync.amazonaws.com/*`), not a wildcard account.
+- **Least-privilege testing-infra S3 roles:** The DataSync S3 role is scoped to source-read actions only (`s3:GetObject`, `s3:GetObjectTagging`) since S3 is the transfer source; write/delete/tagging actions are omitted. The S3 Batch role reads the manifest with `s3:GetObject` only (no `GetObjectVersion`).
+- **Hardened web UI container:** The nginx container runs as the non-root `nginx` user on unprivileged port 8080 and defines a `HEALTHCHECK` for container-level liveness.
+- **Safe ECS deployments:** The Fargate service runs with `minHealthyPercent: 100` (full capacity retained during rollouts) and a deployment circuit breaker with automatic rollback.
 - **Error handling:** Structured JSON error responses; no stack traces leaked to clients.
 - **Data lifecycle:** DynamoDB TTL automatically removes records 30 days after completion.
 - **No hardcoded secrets:** Clean secrets scan; no credentials committed to the repository.

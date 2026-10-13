@@ -12,7 +12,7 @@ import { VpcWebUiConstruct } from '../../lib/constructs/vpc-web-ui-construct';
  * - HTTPS listener on port 443 with ACM certificate
  * - Fargate service has desiredCount: 2, assignPublicIp: DISABLED
  * - Health check configuration (path "/", interval 30s, thresholds 2/3)
- * - Security group rules (ALB inbound 443 from VPC CIDR, Fargate inbound 80 from ALB SG)
+ * - Security group rules (ALB inbound 443 from VPC CIDR, Fargate inbound 8080 from ALB SG)
  */
 describe('VpcWebUiConstruct', () => {
   let template: Template;
@@ -99,13 +99,35 @@ describe('VpcWebUiConstruct', () => {
     });
   });
 
-  test('Fargate security group allows inbound 80 from ALB security group only', () => {
-    // Fargate SG ingress rule references ALB SG via SourceSecurityGroupId
+  test('Fargate security group allows inbound 8080 from ALB security group only', () => {
+    // Fargate SG ingress rule references ALB SG via SourceSecurityGroupId.
+    // Port is 8080 because the container runs as the non-root `nginx` user,
+    // which cannot bind privileged ports (< 1024).
     template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
       IpProtocol: 'tcp',
-      FromPort: 80,
-      ToPort: 80,
+      FromPort: 8080,
+      ToPort: 8080,
       SourceSecurityGroupId: Match.anyValue(),
+    });
+  });
+
+  test('Fargate service enables deployment circuit breaker with rollback', () => {
+    template.hasResourceProperties('AWS::ECS::Service', {
+      DeploymentConfiguration: Match.objectLike({
+        DeploymentCircuitBreaker: {
+          Enable: true,
+          Rollback: true,
+        },
+      }),
+    });
+  });
+
+  test('Fargate service keeps full capacity during deployments (minHealthyPercent 100)', () => {
+    template.hasResourceProperties('AWS::ECS::Service', {
+      DeploymentConfiguration: Match.objectLike({
+        MinimumHealthyPercent: 100,
+        MaximumPercent: 200,
+      }),
     });
   });
 });

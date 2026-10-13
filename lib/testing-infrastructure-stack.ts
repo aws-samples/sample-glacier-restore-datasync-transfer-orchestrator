@@ -31,7 +31,7 @@ import { Construct } from 'constructs';
  *   npx cdk deploy RestoreTransferTestingStack --parameters ActivationKey=<key>
  *
  * The same pattern applies to the Enhanced mode agent, using
- * gatewayType=SYNC_ENHANCED and the enhanced agent's public IP.
+ * gatewayType=SYNC and the enhanced agent's public IP.
  */
 export class TestingInfrastructureStack extends cdk.Stack {
   /** ARN of the DataSync task (Basic mode) */
@@ -194,7 +194,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     (agent.node.defaultChild as cdk.CfnResource ?? agent).cfnOptions.condition = hasActivationKey;
 
     // ─── Enhanced Mode DataSync Agent EC2 Instance ─────────────────────
-    // Uses the v3 AMI which supports Enhanced mode (gatewayType=SYNC_ENHANCED)
+    // Uses the v3 AMI which supports Enhanced mode (gatewayType=SYNC)
     // Retrieved via: aws ssm get-parameter --name /aws/service/datasync/ami/v3 --region <region>
     const enhancedAgentAmi = ec2.MachineImage.fromSsmParameter(
       '/aws/service/datasync/ami/v3',
@@ -269,15 +269,14 @@ export class TestingInfrastructureStack extends cdk.Stack {
               ],
               resources: [sourceBucket.bucketArn],
             }),
+            // S3 is the transfer SOURCE here (data flows S3 -> NFS), so DataSync
+            // only needs object read + tag-read permissions. Write/delete actions
+            // (PutObject, DeleteObject, AbortMultipartUpload, PutObjectTagging)
+            // are only required when S3 is the destination, so they are omitted.
             new iam.PolicyStatement({
               actions: [
-                's3:AbortMultipartUpload',
-                's3:DeleteObject',
                 's3:GetObject',
-                's3:ListMultipartUploadParts',
-                's3:PutObject',
                 's3:GetObjectTagging',
-                's3:PutObjectTagging',
               ],
               resources: [`${sourceBucket.bucketArn}/*`],
             }),
@@ -424,8 +423,10 @@ export class TestingInfrastructureStack extends cdk.Stack {
               actions: ['s3:RestoreObject', 's3:GetObject'],
               resources: [`${sourceBucket.bucketArn}/*`],
             }),
+            // Reads the batch manifest from the staging bucket. GetObjectVersion
+            // is omitted — the manifest is referenced by key, not version ID.
             new iam.PolicyStatement({
-              actions: ['s3:GetObject', 's3:GetObjectVersion'],
+              actions: ['s3:GetObject'],
               resources: [`${stagingBucket.bucketArn}/*`],
             }),
             new iam.PolicyStatement({
@@ -510,7 +511,7 @@ export class TestingInfrastructureStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'EnhancedAgentActivationCommand', {
-      value: `curl -v "http://${enhancedAgentInstance.instancePublicIp}/?gatewayType=SYNC_ENHANCED&activationRegion=${this.region}&no_redirect"`,
+      value: `curl -v "http://${enhancedAgentInstance.instancePublicIp}/?gatewayType=SYNC&activationRegion=${this.region}&no_redirect"`,
       description: 'Run this after Phase 1 deploy to get the Enhanced mode activation key',
     });
   }

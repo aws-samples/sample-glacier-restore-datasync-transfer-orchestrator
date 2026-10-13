@@ -37,6 +37,7 @@ The orchestrator handles each request intelligently:
 - [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/cli.html) v2 (`npm install -g aws-cdk`)
 - An AWS account with permissions to create Lambda, API Gateway, DynamoDB, S3, ECS, ELB, EC2 (VPC), Cognito, and DataSync resources
 - An ACM certificate in the deployment region (for HTTPS on the internal ALB)
+- (Optional) A Route 53 private hosted zone to resolve your custom access domain (`APP_URL`) to the internal ALB — bring your own, or create one after deploy (see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone))
 - (Optional) An existing VPC with at least 2 private subnets in separate AZs and NAT Gateway routing configured
 - (Optional) A pre-configured AWS DataSync task (source S3 → destination NFS/S3)
 - (Optional) An S3 bucket for staging batch operation manifests and DataSync manifests
@@ -87,9 +88,65 @@ export BATCH_ROLE_ARN=arn:aws:iam::123456789012:role/S3BatchOperationsRole
 export DATASYNC_S3_ROLE_ARN=arn:aws:iam::123456789012:role/DataSyncS3Role
 ```
 
-### ACM certificate
+> **Required variables are validated at synth.** If a variable marked **Yes** above is unset, `cdk synth`/`cdk deploy` fails immediately with a message naming the missing variable — rather than deploying and failing partway through (e.g. the ALB rejecting a placeholder ACM certificate ARN).
 
-The internal ALB requires an ACM certificate for HTTPS termination. This is needed because the Cognito PKCE auth flow requires HTTPS callback URLs, and it encrypts traffic between the user's workstation and the ALB.
+### ACM certificate and custom domain
+
+The internal ALB requires an ACM certificate (`CERTIFICATE_ARN`) for HTTPS termination, and clients need DNS that resolves your access domain (`APP_URL`) to the ALB. These are inputs to the deployment: bring your own, or create them in the Deployment section. The certificate must exist before you deploy `RestoreTransferStack` (see [Create the ACM certificate](#create-the-acm-certificate-before-deploying)); the private hosted zone alias record is created after deploy, since it points at the ALB the stack creates (see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone)).
+
+### Using an existing VPC
+
+If your organization has a shared VPC (e.g., connected via Transit Gateway or Direct Connect), set `EXISTING_VPC_ID` to reuse it:
+
+```bash
+export EXISTING_VPC_ID=vpc-0abc1234def56789a
+```
+
+Both the `RestoreTransferStack` and `RestoreTransferTestingStack` read this variable. When set, both stacks deploy into the same VPC, eliminating the need for VPC peering between them.
+
+Requirements for the existing VPC:
+- At least 2 private subnets in separate Availability Zones (for `RestoreTransferStack`)
+- At least 1 public subnet (for the testing stack's EC2 instances — NFS server and DataSync agents)
+- NAT Gateway routing configured for outbound internet access from private subnets
+- Gateway VPC Endpoints for S3 and DynamoDB should already exist (the stack skips creating them for existing VPCs to avoid conflicts)
+- The `RestoreTransferStack` will still create interface VPC Endpoints (execute-api, lambda, logs, monitoring, sts) and security groups within the provided VPC
+
+### Access URL and Cognito redirects (`APP_URL`)
+
+The web UI is fronted by an internal ALB. By default, the Cognito callback/logout URLs and the front-end redirect URIs are set to the ALB's own DNS name. That works only if your workstation can both **resolve** and **reach** the ALB DNS name.
+
+The recommended setup is to access the app through a custom domain (e.g. `restore-tool.internal`) that resolves to the ALB via a Route 53 private hosted zone — see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone). This gives you a stable name that matches your TLS certificate.
+
+When you access the app through a custom domain, set `APP_URL` to that domain so authentication works correctly:
+
+```bash
+export APP_URL=https://restore-tool.internal
+```
+
+`APP_URL` controls:
+- The Cognito User Pool Client **callback and logout URLs** (so Cognito redirects the browser back to a URL it can resolve and that matches the TLS certificate)
+- The `redirectUri` / `logoutUri` injected into the container's `config.js`
+- The API Gateway CORS allowed origin
+
+If `APP_URL` is omitted, the stack falls back to the internal ALB DNS name (original behavior). The value should match the domain on your ACM certificate — otherwise the browser shows a certificate name mismatch.
+
+> **Tip:** The custom domain must resolve to the ALB from the client. The durable option is a Route 53 private hosted zone for the domain with an alias record to the ALB, with your VPN using the VPC resolver — see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone) for step-by-step instructions. For quick testing, a hosts-file entry pointing the domain at an ALB private IP works, but ALB node IPs can change over time.
+
+## Deployment
+
+### First-time setup
+
+If this is your first CDK deployment in the target account/region, bootstrap the environment:
+
+```bash
+cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
+```
+
+### Create the ACM certificate (before deploying)
+
+The internal ALB requires an ACM certificate (`CERTIFICATE_ARN`) for HTTPS termination. This is needed because the Cognito PKCE auth flow requires HTTPS callback URLs, and it encrypts traffic between the user's workstation and the ALB. If you already have a certificate (e.g., one issued by your organization), bring it as described in [Configuration](#configuration) and skip ahead. Otherwise, choose one of the two options below, then `export CERTIFICATE_ARN` before you deploy `RestoreTransferStack`.
+
+> **Resolving your custom domain** to the ALB (via a Route 53 private hosted zone) happens **after** deployment — see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone).
 
 #### Option A: Self-signed certificate (simplest, no public domain needed)
 
@@ -120,15 +177,7 @@ echo "Certificate ARN: $CERTIFICATE_ARN"
 export CERTIFICATE_ARN
 ```
 
-**3. Deploy the stack:**
-
-```bash
-cdk deploy RestoreTransferStack
-```
-
-**4. Access the app:**
-
-Navigate to `https://<AlbDnsName>` from a VPC-connected workstation. Your browser will warn about the self-signed certificate — click through to proceed.
+The self-signed cert uses a hostname (`restore-tool.internal` above) that clients must be able to resolve to the ALB — set this up with a private hosted zone after you deploy (see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone)). When you reach the app, your browser will warn about the self-signed certificate — click through to proceed.
 
 > **Renewal:** Imported certificates do not auto-renew. Before the cert expires (365 days), regenerate and re-import using `aws acm import-certificate --certificate-arn <existing-arn>` with the new cert files, then redeploy.
 
@@ -175,86 +224,9 @@ aws route53 change-resource-record-sets \
 aws acm wait certificate-validated --certificate-arn $CERTIFICATE_ARN
 ```
 
-**3. Deploy the stack** with `export CERTIFICATE_ARN` set, then **create a private hosted zone** so VPC clients resolve the domain to the ALB:
+**3. `export CERTIFICATE_ARN`** so it is set for the deploy. The public hosted zone above is only used for ACM DNS validation — it is not used for resolution. VPC clients still resolve the ALB through a private hosted zone (see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone)), after which users reach the app at `https://restore-tool.internal.example.com` with no browser warnings.
 
-```bash
-ALB_DNS=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
-  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text)
-
-# Create private hosted zone
-ZONE_ID=$(aws route53 create-hosted-zone \
-  --name "internal.example.com" \
-  --caller-reference "$(date +%s)" \
-  --vpc VPCRegion=us-west-2,VPCId=<YOUR_VPC_ID> \
-  --hosted-zone-config PrivateZone=true \
-  --query "HostedZone.Id" --output text)
-
-# Point the domain at the ALB
-aws route53 change-resource-record-sets \
-  --hosted-zone-id $ZONE_ID \
-  --change-batch '{
-    "Changes": [{
-      "Action": "UPSERT",
-      "ResourceRecordSet": {
-        "Name": "restore-tool.internal.example.com",
-        "Type": "CNAME",
-        "TTL": 300,
-        "ResourceRecords": [{"Value": "'$ALB_DNS'"}]
-      }
-    }]
-  }'
-```
-
-Users access the app at `https://restore-tool.internal.example.com` with no browser warnings.
-
-
-### Using an existing VPC
-
-If your organization has a shared VPC (e.g., connected via Transit Gateway or Direct Connect), set `EXISTING_VPC_ID` to reuse it:
-
-```bash
-export EXISTING_VPC_ID=vpc-0abc1234def56789a
-```
-
-Both the `RestoreTransferStack` and `RestoreTransferTestingStack` read this variable. When set, both stacks deploy into the same VPC, eliminating the need for VPC peering between them.
-
-Requirements for the existing VPC:
-- At least 2 private subnets in separate Availability Zones (for `RestoreTransferStack`)
-- At least 1 public subnet (for the testing stack's EC2 instances — NFS server and DataSync agents)
-- NAT Gateway routing configured for outbound internet access from private subnets
-- Gateway VPC Endpoints for S3 and DynamoDB should already exist (the stack skips creating them for existing VPCs to avoid conflicts)
-- The `RestoreTransferStack` will still create interface VPC Endpoints (execute-api, lambda, logs, monitoring, sts) and security groups within the provided VPC
-
-### Access URL and Cognito redirects (`APP_URL`)
-
-The web UI is fronted by an internal ALB. By default, the Cognito callback/logout URLs and the front-end redirect URIs are set to the ALB's own DNS name. That works only if your workstation can both **resolve** and **reach** the ALB DNS name.
-
-In many private networks the ALB DNS name does not resolve from client machines: internal ALB names are published in public DNS but point to private IPs (`10.x.x.x`), and corporate resolvers/VPNs frequently drop those answers (DNS-rebinding protection) or don't forward `amazonaws.com` lookups. In that case you access the app through a custom domain instead (e.g. `restore-tool.internal`), typically via a Route 53 private hosted zone or a local hosts entry.
-
-When you access the app through a custom domain, set `APP_URL` to that domain so authentication works correctly:
-
-```bash
-export APP_URL=https://restore-tool.internal
-```
-
-`APP_URL` controls:
-- The Cognito User Pool Client **callback and logout URLs** (so Cognito redirects the browser back to a URL it can resolve and that matches the TLS certificate)
-- The `redirectUri` / `logoutUri` injected into the container's `config.js`
-- The API Gateway CORS allowed origin
-
-If `APP_URL` is omitted, the stack falls back to the internal ALB DNS name (original behavior). The value should match the domain on your ACM certificate — otherwise the browser shows a certificate name mismatch.
-
-> **Tip:** The custom domain must resolve to the ALB from the client. The durable option is a Route 53 private hosted zone for the domain with an alias record to the ALB, with your VPN using the VPC resolver. For quick testing, a hosts-file entry pointing the domain at an ALB private IP works, but ALB node IPs can change over time.
-
-## Deployment
-
-### First-time setup
-
-If this is your first CDK deployment in the target account/region, bootstrap the environment:
-
-```bash
-cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
-```
+The private hosted zone that resolves your custom domain to the ALB is created **after** both stacks are deployed (the alias record points at the ALB the main stack creates) — see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone) below.
 
 ### Testing infrastructure (optional — if you don't have DataSync resources)
 
@@ -296,7 +268,7 @@ Both agents activate the same way via curl (port 80) — only the `gatewayType` 
 curl -v "http://<basic-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
 
 # Get the Enhanced mode activation key (use DataSyncEnhancedAgentPublicIp from Phase 1 outputs)
-curl -v "http://<enhanced-agent-public-ip>/?gatewayType=SYNC_ENHANCED&activationRegion=us-west-2&no_redirect"
+curl -v "http://<enhanced-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
 
 # The activation key is returned directly in the response body
 ```
@@ -333,7 +305,145 @@ The deploy command will output:
 - `CognitoUserPoolId` — The Cognito User Pool ID
 - `CognitoClientId` — The Cognito User Pool Client ID
 
-> **Accessing the application:** Since the ALB is internal (no public IP), you must access the web UI from a machine connected to the VPC — for example, via AWS VPN Client, AWS Direct Connect, a bastion host, or AWS Cloud9 within the VPC. Navigate to your access URL in the browser: `https://<AlbDnsName>` if you can resolve/reach the ALB name directly, or your custom domain (e.g. `https://restore-tool.internal`) if you set [`APP_URL`](#access-url-and-cognito-redirects-app_url). The access URL must match your ACM certificate and the configured `APP_URL`, otherwise Cognito login will fail to redirect back.
+> **Resolve your custom domain now:** With the ALB created, create the Route 53 private hosted zone alias record so clients resolve your domain to the ALB — see [Resolve your custom domain with a private hosted zone](#resolve-your-custom-domain-with-a-private-hosted-zone). Then set [`APP_URL`](#access-url-and-cognito-redirects-app_url) to that domain and redeploy so Cognito redirects and CORS use the resolvable name. (Skip this if you already have internal DNS resolving the domain to the ALB.)
+
+> **Accessing the application:** Since the ALB is internal (no public IP), you must access the web UI from a machine connected to the VPC — for example, via AWS VPN Client, AWS Direct Connect, or a bastion host. Navigate to your access URL in the browser: `https://<AlbDnsName>` if you can resolve/reach the ALB name directly, or your custom domain (e.g. `https://restore-tool.internal`) if you set [`APP_URL`](#access-url-and-cognito-redirects-app_url). Two separate things depend on the URL you use:
+>
+> - **Cognito login:** the URL you access must match the configured [`APP_URL`](#access-url-and-cognito-redirects-app_url) (which sets Cognito's callback/logout URLs). If they differ, Cognito will refuse to redirect the browser back after login.
+> - **TLS trust:** the browser checks the hostname against the ACM certificate. With the self-signed cert (Option A) the hostname won't be trusted regardless, so the browser shows a warning you click through; with a public cert (Option B) for the domain you access, there's no warning. Either way this is a trust/warning concern, not what makes login work.
+
+> **Allow your network on the ALB security group:** By default, the ALB's security group only allows inbound HTTPS (443) from the VPC's own CIDR range. If you reach the app from a connected network whose source addresses fall outside that range — a VPN client address pool, a peered VPC, or an on-premises network over Direct Connect or Transit Gateway — the ALB will drop the connection (the page hangs or times out) even though DNS resolves. Add an inbound rule to the ALB security group allowing TCP 443 from your network's CIDR (or from a security group you control, e.g. a VPN/bastion SG). Find the ALB security group under **EC2 Console → Load Balancers → your ALB → Security**, or add the rule via the CLI:
+>
+> ```bash
+> # Find the ALB security group ID
+> ALB_SG_ID=$(aws elbv2 describe-load-balancers \
+>   --query "LoadBalancers[?contains(DNSName, 'internal')].SecurityGroups[0]" --output text)
+>
+> # Allow HTTPS from your internal network CIDR (replace with your range)
+> aws ec2 authorize-security-group-ingress \
+>   --group-id "$ALB_SG_ID" \
+>   --protocol tcp --port 443 --cidr 10.100.0.0/16
+> ```
+>
+> Grant access only to the specific CIDRs or security groups that need it — avoid opening 443 to `0.0.0.0/0`.
+
+### Resolve your custom domain with a private hosted zone
+
+> **When:** Do this **after** both stacks are deployed — the alias record points at the ALB that `RestoreTransferStack` creates. If you already have internal DNS resolving your domain to the ALB, skip this and just set `APP_URL`.
+
+To access the app through your chosen domain, clients need DNS that resolves that name to the internal ALB. The durable way to do this — for both certificate options above — is a Route 53 **private hosted zone (PHZ)** with an **alias A record** pointing at the ALB. No public domain or public hosted zone is required for resolution.
+
+#### Prerequisites
+
+Your VPC must have DNS support enabled — this is required for PHZ resolution to work. Both attributes must be `true`:
+
+```bash
+aws ec2 modify-vpc-attribute --vpc-id <vpc-id> --enable-dns-support
+aws ec2 modify-vpc-attribute --vpc-id <vpc-id> --enable-dns-hostnames
+```
+
+You can also verify or set this in the VPC Console → your VPC → **Actions** → **Edit VPC settings**.
+
+#### Step 1: Note your internal ALB's DNS name and hosted zone ID
+
+1. Open the **EC2 Console → Load Balancers** and select your internal ALB.
+2. On the **Details** tab, copy the **DNS name** (e.g., `internal-my-alb-1234567890.us-east-1.elb.amazonaws.com`) and the **Hosted Zone ID** for the ALB — you need both for the alias record.
+
+The ALB DNS name is also available as the `AlbDnsName` stack output:
+
+```bash
+ALB_DNS=$(aws cloudformation describe-stacks --stack-name RestoreTransferStack \
+  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text)
+```
+
+#### Step 2: Create the private hosted zone
+
+**Console:** Open the **Route 53 Console → Hosted zones → Create hosted zone** and fill in:
+
+- **Domain name:** your chosen internal name (e.g., `app.internal.example.com`, or `restore-tool.internal`). This must match the domain on your certificate.
+- **Type:** Private hosted zone
+- **VPC Region:** the region your VPC is in
+- **VPC ID:** the VPC(s) where workloads will resolve this name
+
+Then click **Create hosted zone**.
+
+**CLI:**
+
+```bash
+ZONE_ID=$(aws route53 create-hosted-zone \
+  --name "app.internal.example.com" \
+  --caller-reference "$(date +%s)" \
+  --vpc VPCRegion=us-west-2,VPCId=<YOUR_VPC_ID> \
+  --hosted-zone-config PrivateZone=true \
+  --query "HostedZone.Id" --output text)
+```
+
+> **Important:** Any VPC you want to resolve this name from must be associated with the PHZ. When you create the PHZ you must associate at least one VPC from the same account. Associate additional VPCs later via **Hosted zones → your zone → Associate VPCs**. Cross-account VPC associations require a separate authorization step. See [Creating a private hosted zone](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zone-private-creating.html).
+
+#### Step 3: Create an alias A record pointing to the ALB
+
+**Console:** Inside your new PHZ, click **Create record** and configure:
+
+- **Record name:** the subdomain/prefix you want (e.g., `myapp` → `myapp.app.internal.example.com`), or leave blank for the zone apex.
+- **Record type:** `A – Routes traffic to an IPv4 address and some AWS resources`
+- **Alias:** toggle **ON**
+- **Route traffic to:** `Alias to Application and Classic Load Balancer`
+- **Region:** your ALB's region
+- **Load balancer:** select your internal ALB from the dropdown
+
+Then click **Create records**.
+
+**CLI:** Create an `alias-record.json` file:
+
+```json
+{
+  "Changes": [{
+    "Action": "CREATE",
+    "ResourceRecordSet": {
+      "Name": "myapp.app.internal.example.com",
+      "Type": "A",
+      "AliasTarget": {
+        "HostedZoneId": "Z35SXDOTRQ7X7K",
+        "DNSName": "dualstack.internal-my-alb-1234567890.us-east-1.elb.amazonaws.com",
+        "EvaluateTargetHealth": true
+      }
+    }
+  }]
+}
+```
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id <your-phz-id> \
+  --change-batch file://alias-record.json
+```
+
+In the JSON, `HostedZoneId` and `DNSName` under `AliasTarget` are the ALB's values from Step 1 (not the PHZ ID).
+
+> **Key detail:** When using the CLI, always prefix the ALB DNS name with `dualstack.` — this ensures both IPv4 and IPv6 resolution works correctly. The console adds this prefix automatically. Route 53 does not charge for alias queries to ELB load balancers.
+
+#### Step 4: Verify resolution (from within the VPC)
+
+From an EC2 instance or other resource inside an associated VPC:
+
+```bash
+nslookup myapp.app.internal.example.com
+# or
+dig myapp.app.internal.example.com
+```
+
+You should get back the private IPs of the ALB's nodes.
+
+> **Note:** PHZ resolution only works from within an associated VPC (or via a Route 53 Resolver inbound endpoint for hybrid/on-premises access). Querying from outside the VPC returns no result — this is by design. See [Working with private hosted zones](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-private.html).
+
+#### Step 5: Set `APP_URL` and redeploy
+
+Set [`APP_URL`](#access-url-and-cognito-redirects-app_url) to the domain the record resolves and redeploy so Cognito redirects and CORS use the resolvable name:
+
+```bash
+export APP_URL=https://myapp.app.internal.example.com
+cdk deploy RestoreTransferStack
+```
 
 ### Post-deployment: create a Cognito user
 
