@@ -1,9 +1,19 @@
 /**
  * Resolves the DataSync task ARN for a given source bucket and destination location.
  *
- * Searches existing DataSync tasks for one that matches both the source S3 location
- * (bucket) and the specified NFS destination location. If no matching task exists,
- * creates a new one.
+ * Searches existing DataSync tasks for one that matches the source S3 location
+ * (bucket), the destination NFS location, AND the requested task mode. If no
+ * matching task exists, a new one is created (unless creation is disabled).
+ *
+ * Hardening notes:
+ * - Task mode is matched STRICTLY: a candidate with an unknown/absent TaskMode
+ *   is never silently treated as BASIC. This prevents mode mismatches when
+ *   multiple tasks share the same source + destination but differ by mode.
+ * - Every candidate rejection and every task creation is logged, so leftover
+ *   auto-created tasks can be traced back to the run that produced them.
+ * - Callers may disable the create-on-miss fallback via `allowCreate: false`
+ *   to avoid accumulating orphaned tasks in environments where the full set of
+ *   tasks is expected to be provisioned ahead of time (e.g. via CDK).
  */
 
 import {
@@ -30,68 +40,78 @@ export interface ResolveDataSyncTaskParams {
   dataSyncS3RoleArn: string;
   /** DataSync task mode (BASIC or ENHANCED). Defaults to BASIC. */
   taskMode?: DataSyncTaskMode;
+  /**
+   * Whether to create a new task when no existing task matches. Defaults to
+   * true for backward compatibility. Set to false to fail fast instead of
+   * creating ad-hoc tasks (prevents orphan accumulation).
+   */
+  allowCreate?: boolean;
 }
 
 /**
- * Finds an existing DataSync task that transfers from the given S3 bucket
- * to the specified destination location, or creates a new one.
+ * Finds an existing DataSync task that transfers from the given S3 bucket to
+ * the specified destination location in the requested mode, or creates a new
+ * one when `allowCreate` is true (the default).
  *
  * @returns The DataSync task ARN
+ * @throws Error if no task matches and creation is disabled
  */
 export async function resolveDataSyncTask(
   params: ResolveDataSyncTaskParams
 ): Promise<string> {
-  const { sourceBucket, destinationLocationArn, dataSyncS3RoleArn, taskMode = DEFAULT_TASK_MODE } = params;
+  const {
+    sourceBucket,
+    destinationLocationArn,
+    dataSyncS3RoleArn,
+    taskMode = DEFAULT_TASK_MODE,
+    allowCreate = true,
+  } = params;
 
   // Validate that the destination location's agent supports the requested task mode
   await validateDestinationAgentMode(destinationLocationArn, taskMode);
 
-  // Step 1: List all tasks and find one matching our source + destination
-  let nextToken: string | undefined;
+  // Resolve the source S3 location once up front so we can match tasks by ARN
+  // directly, instead of re-listing locations for every candidate task.
+  const sourceLocationArn = await findS3LocationForBucket(sourceBucket);
 
-  do {
-    const listResponse = await dataSyncClient.send(
-      new ListTasksCommand({ NextToken: nextToken })
+  // Step 1: Find an existing task matching source + destination + mode.
+  const existing = await findMatchingTask({
+    sourceLocationArn,
+    destinationLocationArn,
+    taskMode,
+  });
+
+  if (existing) {
+    console.info(
+      `[resolveDataSyncTask] Reusing existing task ${existing} ` +
+        `(dest=${destinationLocationArn}, mode=${taskMode})`
     );
+    return existing;
+  }
 
-    if (listResponse.Tasks) {
-      for (const task of listResponse.Tasks) {
-        if (!task.TaskArn) continue;
+  // Step 2: No matching task. Either create one, or fail fast.
+  if (!allowCreate) {
+    throw new Error(
+      `No DataSync task found for destination "${destinationLocationArn}" in ` +
+        `${taskMode} mode with a source for bucket "${sourceBucket}", and task ` +
+        `creation is disabled. Provision the task (e.g. via CDK) or enable creation.`
+    );
+  }
 
-        const described = await dataSyncClient.send(
-          new DescribeTaskCommand({ TaskArn: task.TaskArn })
-        );
+  // Ensure we have a source S3 location (create one if the bucket has none).
+  const resolvedSourceArn =
+    sourceLocationArn ?? (await createS3Location(sourceBucket, dataSyncS3RoleArn));
 
-        // Check if destination matches
-        if (described.DestinationLocationArn !== destinationLocationArn) continue;
-
-        // Check if task mode matches (DescribeTask returns Options.TaskMode or top-level TaskMode)
-        const describedMode = described.TaskMode ?? "BASIC";
-        if (describedMode !== taskMode) continue;
-
-        // Check if source location is an S3 location for our bucket
-        if (described.SourceLocationArn) {
-          const isMatchingSource = await isS3LocationForBucket(
-            described.SourceLocationArn,
-            sourceBucket
-          );
-          if (isMatchingSource) {
-            return task.TaskArn;
-          }
-        }
-      }
-    }
-
-    nextToken = listResponse.NextToken;
-  } while (nextToken);
-
-  // Step 2: No matching task found — create one
-  // First, find or create the S3 source location
-  const sourceLocationArn = await findOrCreateS3Location(sourceBucket, dataSyncS3RoleArn);
+  console.warn(
+    `[resolveDataSyncTask] No existing task matched ` +
+      `(bucket=${sourceBucket}, dest=${destinationLocationArn}, mode=${taskMode}). ` +
+      `Creating a new task — this task is NOT managed by CDK/CloudFormation and ` +
+      `must be cleaned up manually if no longer needed.`
+  );
 
   const createResponse = await dataSyncClient.send(
     new CreateTaskCommand({
-      SourceLocationArn: sourceLocationArn,
+      SourceLocationArn: resolvedSourceArn,
       DestinationLocationArn: destinationLocationArn,
       Name: `restore-transfer-${sourceBucket}-${Date.now()}`,
       TaskMode: taskMode,
@@ -108,59 +128,130 @@ export async function resolveDataSyncTask(
     throw new Error("CreateTask did not return a TaskArn");
   }
 
+  console.info(
+    `[resolveDataSyncTask] Created task ${createResponse.TaskArn} ` +
+      `(dest=${destinationLocationArn}, mode=${taskMode})`
+  );
+
   return createResponse.TaskArn;
 }
 
 /**
- * Checks if a DataSync location ARN is an S3 location pointing to the given bucket.
+ * Scans existing tasks (with pagination) and returns the ARN of the first task
+ * whose source, destination, and mode all match. Returns undefined if none match.
+ *
+ * Matching rules:
+ * - Destination location ARN must equal the requested destination exactly.
+ * - Task mode must equal the requested mode EXACTLY. A task whose DescribeTask
+ *   response omits TaskMode is skipped (never assumed BASIC), because an
+ *   ambiguous mode cannot be safely matched to either request.
+ * - Source location ARN must equal the resolved source S3 location. When the
+ *   source location is unknown (the bucket has no S3 location yet), no existing
+ *   task can match, so the scan is skipped entirely.
  */
-async function isS3LocationForBucket(
-  locationArn: string,
+async function findMatchingTask(params: {
+  sourceLocationArn: string | undefined;
+  destinationLocationArn: string;
+  taskMode: DataSyncTaskMode;
+}): Promise<string | undefined> {
+  const { sourceLocationArn, destinationLocationArn, taskMode } = params;
+
+  // Without a known source location, nothing can match an existing task.
+  if (!sourceLocationArn) {
+    return undefined;
+  }
+
+  let nextToken: string | undefined;
+
+  do {
+    const listResponse = await dataSyncClient.send(
+      new ListTasksCommand({ NextToken: nextToken })
+    );
+
+    for (const task of listResponse.Tasks ?? []) {
+      if (!task.TaskArn) continue;
+
+      const described = await dataSyncClient.send(
+        new DescribeTaskCommand({ TaskArn: task.TaskArn })
+      );
+
+      if (described.DestinationLocationArn !== destinationLocationArn) {
+        continue;
+      }
+
+      // Strict mode match — do NOT default an absent TaskMode to BASIC.
+      if (described.TaskMode !== taskMode) {
+        console.debug(
+          `[resolveDataSyncTask] Skipping task ${task.TaskArn}: mode ` +
+            `${described.TaskMode ?? "<unknown>"} != requested ${taskMode}`
+        );
+        continue;
+      }
+
+      if (described.SourceLocationArn !== sourceLocationArn) {
+        continue;
+      }
+
+      return task.TaskArn;
+    }
+
+    nextToken = listResponse.NextToken;
+  } while (nextToken);
+
+  return undefined;
+}
+
+/**
+ * Finds the S3 location ARN for the given bucket, paginating through all
+ * locations. Returns undefined if no S3 location for the bucket exists.
+ *
+ * Uses the `LocationUri` filter to narrow the server-side list, then matches
+ * the bucket name exactly (the filter is a substring "Contains" match, so a
+ * final exact check avoids matching buckets that merely share a prefix).
+ */
+async function findS3LocationForBucket(
   bucket: string
-): Promise<boolean> {
-  try {
-    // ListLocations with filter doesn't provide URI per-location easily,
-    // so we check if the location URI contains the bucket name
+): Promise<string | undefined> {
+  let nextToken: string | undefined;
+  const exactUri = `s3://${bucket}`;
+
+  do {
     const listResponse = await dataSyncClient.send(
       new ListLocationsCommand({
+        NextToken: nextToken,
         Filters: [
-          { Name: "LocationUri", Values: [`s3://${bucket}`], Operator: "Contains" },
+          { Name: "LocationUri", Values: [exactUri], Operator: "Contains" },
         ],
       })
     );
 
-    return (
-      listResponse.Locations?.some((loc) => loc.LocationArn === locationArn) ?? false
-    );
-  } catch {
-    return false;
-  }
+    for (const loc of listResponse.Locations ?? []) {
+      if (!loc.LocationArn || !loc.LocationUri) continue;
+      // Match s3://bucket exactly or s3://bucket/<prefix>, but not s3://bucket-other.
+      if (
+        loc.LocationUri === `${exactUri}/` ||
+        loc.LocationUri === exactUri ||
+        loc.LocationUri.startsWith(`${exactUri}/`)
+      ) {
+        return loc.LocationArn;
+      }
+    }
+
+    nextToken = listResponse.NextToken;
+  } while (nextToken);
+
+  return undefined;
 }
 
 /**
- * Finds an existing S3 location for the bucket or creates a new one.
+ * Creates a new S3 location for the given bucket.
+ *
+ * @throws Error if CreateLocationS3 does not return a LocationArn
  */
-async function findOrCreateS3Location(
+async function createS3Location(
   bucket: string,
   roleArn: string
 ): Promise<string> {
-  // Search for existing S3 location
-  const listResponse = await dataSyncClient.send(
-    new ListLocationsCommand({
-      Filters: [
-        { Name: "LocationUri", Values: [`s3://${bucket}`], Operator: "Contains" },
-      ],
-    })
-  );
-
-  if (listResponse.Locations && listResponse.Locations.length > 0) {
-    const existing = listResponse.Locations[0];
-    if (existing.LocationArn) {
-      return existing.LocationArn;
-    }
-  }
-
-  // Create a new S3 location
   const createResponse = await dataSyncClient.send(
     new CreateLocationS3Command({
       S3BucketArn: `arn:aws:s3:::${bucket}`,
@@ -171,7 +262,9 @@ async function findOrCreateS3Location(
   );
 
   if (!createResponse.LocationArn) {
-    throw new Error(`CreateLocationS3 for bucket "${bucket}" did not return a LocationArn`);
+    throw new Error(
+      `CreateLocationS3 for bucket "${bucket}" did not return a LocationArn`
+    );
   }
 
   return createResponse.LocationArn;
@@ -208,8 +301,8 @@ async function validateDestinationAgentMode(
       return;
     }
 
-    // Check the first agent's connectivity status to determine its type
-    // Enhanced agents report as "datasync-v3" platform, Basic as "datasync-v2"
+    // Check the first agent's platform version to determine its mode.
+    // Enhanced agents report platform version "3.x", Basic report "2.x".
     for (const agentArn of agentArns) {
       const agentResponse = await dataSyncClient.send(
         new DescribeAgentCommand({ AgentArn: agentArn })

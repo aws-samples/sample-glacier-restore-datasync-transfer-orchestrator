@@ -23,6 +23,7 @@
   let lastSuccessfulFetch = Date.now();
   let connectivityWarningVisible = false;
   let destinationsMap = {}; // locationArn → locationUri lookup
+  let destinationModeMap = {}; // locationArn → taskMode (BASIC | ENHANCED | UNKNOWN)
 
   // --- DOM References ---
   const form = document.getElementById('restore-form');
@@ -204,6 +205,19 @@
       destinationError.textContent = 'Please select a transfer destination.';
       destinationSelect.classList.add('invalid');
       valid = false;
+    } else {
+      // Guard against a task-mode / destination-agent mismatch, which the
+      // backend would otherwise reject with a "Task mode mismatch" error.
+      var destMode = destinationModeMap[destination];
+      if ((destMode === 'BASIC' || destMode === 'ENHANCED') &&
+          taskModeSelect.value !== destMode) {
+        destinationError.textContent =
+          'This destination requires ' + formatMode(destMode) +
+          ' task mode. Set Task Mode to ' + formatMode(destMode) + ' or pick a ' +
+          formatMode(taskModeSelect.value) + ' destination.';
+        destinationSelect.classList.add('invalid');
+        valid = false;
+      }
     }
 
     return valid;
@@ -629,11 +643,18 @@
   }
 
   /**
-   * Populate the destination dropdown with options and build the ARN → URI lookup map.
+   * Populate the destination dropdown with options and build the ARN → URI
+   * and ARN → task mode lookup maps.
+   *
+   * Each option is labelled with its supported task mode because two locations
+   * can share the same NFS URI while being backed by different agents
+   * (one Basic, one Enhanced). The mode is also stored as a data attribute so
+   * the Task Mode select can be synced when a destination is chosen.
    */
   function populateDestinations(destinations) {
     destinationSelect.innerHTML = '';
     destinationsMap = {};
+    destinationModeMap = {};
 
     if (destinations.length === 0) {
       var emptyOpt = document.createElement('option');
@@ -645,12 +666,41 @@
 
     for (var i = 0; i < destinations.length; i++) {
       var dest = destinations[i];
+      var mode = dest.taskMode || 'UNKNOWN';
       var opt = document.createElement('option');
       opt.value = dest.locationArn;
-      // Display the location URI (e.g., nfs://server/export/path)
-      opt.textContent = dest.locationUri;
+      // Display the location URI plus the mode its agent supports, so two
+      // same-URI locations are distinguishable (e.g. "nfs://... (Enhanced)").
+      opt.textContent = dest.locationUri + ' (' + formatMode(mode) + ')';
+      opt.setAttribute('data-task-mode', mode);
       destinationSelect.appendChild(opt);
       destinationsMap[dest.locationArn] = dest.locationUri;
+      destinationModeMap[dest.locationArn] = mode;
+    }
+
+    // Sync the task mode select to the initially selected destination.
+    syncTaskModeToDestination();
+  }
+
+  /** Human-friendly label for a task mode value. */
+  function formatMode(mode) {
+    if (mode === 'ENHANCED') return 'Enhanced';
+    if (mode === 'BASIC') return 'Basic';
+    return 'Unknown mode';
+  }
+
+  /**
+   * Aligns the Task Mode select with the mode supported by the currently
+   * selected destination. A destination backed by an Enhanced agent can only
+   * run Enhanced tasks (and vice versa), so matching them automatically
+   * prevents the "Task mode mismatch" error at submit time. Destinations with
+   * an UNKNOWN mode leave the task mode select untouched.
+   */
+  function syncTaskModeToDestination() {
+    var arn = destinationSelect.value;
+    var mode = destinationModeMap[arn];
+    if (mode === 'BASIC' || mode === 'ENHANCED') {
+      taskModeSelect.value = mode;
     }
   }
 
@@ -676,6 +726,9 @@
 
     // Load available DataSync destinations
     await fetchDestinations();
+
+    // Keep the task mode aligned with the chosen destination's agent mode
+    destinationSelect.addEventListener('change', syncTaskModeToDestination);
 
     // Form submission
     form.addEventListener('submit', handleSubmit);
