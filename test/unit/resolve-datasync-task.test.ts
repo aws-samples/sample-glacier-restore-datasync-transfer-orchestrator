@@ -36,6 +36,7 @@ describe("resolveDataSyncTask", () => {
       dataSyncMock.on(DescribeTaskCommand).resolves({
         SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
         DestinationLocationArn: baseParams.destinationLocationArn,
+        TaskMode: "BASIC",
       });
 
       // The source location matches our bucket
@@ -117,6 +118,75 @@ describe("resolveDataSyncTask", () => {
       expect(dataSyncMock.commandCalls(CreateTaskCommand)[0].args[0].input.TaskMode).toBe("ENHANCED");
     });
 
+    it("does NOT match a task whose TaskMode is absent (no silent BASIC fallback)", async () => {
+      // A task with matching source + destination but an absent TaskMode must
+      // not be treated as BASIC. A default (BASIC) request should skip it and
+      // create a new task rather than reuse the ambiguous one.
+      dataSyncMock.on(ListTasksCommand).resolves({
+        Tasks: [
+          { TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-nomode" },
+        ],
+      });
+      dataSyncMock.on(DescribeTaskCommand).resolves({
+        SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+        DestinationLocationArn: baseParams.destinationLocationArn,
+        // TaskMode intentionally omitted
+      });
+      dataSyncMock.on(ListLocationsCommand).resolves({
+        Locations: [
+          {
+            LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+            LocationUri: "s3://my-source-bucket",
+          },
+        ],
+      });
+      dataSyncMock.on(CreateTaskCommand).resolves({
+        TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-fresh",
+      });
+
+      const result = await resolveDataSyncTask(baseParams);
+
+      // Did not reuse the ambiguous task; created a fresh one instead.
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-fresh");
+      expect(dataSyncMock.commandCalls(CreateTaskCommand)).toHaveLength(1);
+    });
+
+    it("resolves the source location only once, not per candidate task", async () => {
+      // Hardening: the source S3 location is resolved up front, so ListLocations
+      // should be called once regardless of how many candidate tasks exist.
+      dataSyncMock.on(ListTasksCommand).resolves({
+        Tasks: [
+          { TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-a" },
+          { TaskArn: "arn:aws:datasync:us-east-1:123456789012:task/task-b" },
+        ],
+      });
+      dataSyncMock
+        .on(DescribeTaskCommand)
+        .resolvesOnce({
+          SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+          DestinationLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-other",
+          TaskMode: "BASIC",
+        })
+        .resolvesOnce({
+          SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+          DestinationLocationArn: baseParams.destinationLocationArn,
+          TaskMode: "BASIC",
+        });
+      dataSyncMock.on(ListLocationsCommand).resolves({
+        Locations: [
+          {
+            LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+            LocationUri: "s3://my-source-bucket",
+          },
+        ],
+      });
+
+      const result = await resolveDataSyncTask(baseParams);
+
+      expect(result).toBe("arn:aws:datasync:us-east-1:123456789012:task/task-b");
+      expect(dataSyncMock.commandCalls(ListLocationsCommand)).toHaveLength(1);
+    });
+
     it("paginates through tasks list", async () => {
       const matchingTaskArn = "arn:aws:datasync:us-east-1:123456789012:task/task-page2";
 
@@ -139,6 +209,7 @@ describe("resolveDataSyncTask", () => {
         .resolvesOnce({
           SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-match",
           DestinationLocationArn: baseParams.destinationLocationArn,
+          TaskMode: "BASIC",
         });
 
       dataSyncMock.on(ListLocationsCommand).resolves({
@@ -293,6 +364,45 @@ describe("resolveDataSyncTask", () => {
       await expect(resolveDataSyncTask(baseParams)).rejects.toThrow(
         'CreateLocationS3 for bucket "my-source-bucket" did not return a LocationArn'
       );
+    });
+  });
+
+  describe("allowCreate: false", () => {
+    it("throws instead of creating a task when no existing task matches", async () => {
+      dataSyncMock.on(ListTasksCommand).resolves({ Tasks: [] });
+      dataSyncMock.on(ListLocationsCommand).resolves({ Locations: [] });
+
+      await expect(
+        resolveDataSyncTask({ ...baseParams, allowCreate: false })
+      ).rejects.toThrow("task creation is disabled");
+
+      expect(dataSyncMock.commandCalls(CreateTaskCommand)).toHaveLength(0);
+      expect(dataSyncMock.commandCalls(CreateLocationS3Command)).toHaveLength(0);
+    });
+
+    it("still returns an existing matching task when creation is disabled", async () => {
+      const existingTaskArn = "arn:aws:datasync:us-east-1:123456789012:task/task-existing";
+      dataSyncMock.on(ListTasksCommand).resolves({
+        Tasks: [{ TaskArn: existingTaskArn }],
+      });
+      dataSyncMock.on(DescribeTaskCommand).resolves({
+        SourceLocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+        DestinationLocationArn: baseParams.destinationLocationArn,
+        TaskMode: "BASIC",
+      });
+      dataSyncMock.on(ListLocationsCommand).resolves({
+        Locations: [
+          {
+            LocationArn: "arn:aws:datasync:us-east-1:123456789012:location/loc-s3-src",
+            LocationUri: "s3://my-source-bucket",
+          },
+        ],
+      });
+
+      const result = await resolveDataSyncTask({ ...baseParams, allowCreate: false });
+
+      expect(result).toBe(existingTaskArn);
+      expect(dataSyncMock.commandCalls(CreateTaskCommand)).toHaveLength(0);
     });
   });
 

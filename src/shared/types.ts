@@ -50,6 +50,18 @@ export interface DataSyncDestination {
   locationArn: string;
   /** URI of the NFS/location (e.g., nfs://server/path) */
   locationUri: string;
+  /**
+   * Task mode supported by this destination's agent.
+   * - "BASIC": backed by a Basic-mode (v2) agent
+   * - "ENHANCED": backed by an Enhanced-mode (v3) agent
+   * - "UNKNOWN": agent mode could not be determined (no agent, or describe failed)
+   *
+   * A request's taskMode must match the destination's mode, so clients should
+   * use this to pair the correct destination with the requested mode.
+   */
+  taskMode: DataSyncTaskMode | "UNKNOWN";
+  /** ARN of the agent backing this location (first agent, if multiple) */
+  agentArn?: string;
 }
 
 /** A single entry in the status change timeline */

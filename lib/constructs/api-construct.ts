@@ -163,10 +163,19 @@ export class ApiConstruct extends Construct {
       ...vpcProps,
     });
 
-    // DataSync ListLocations permission for destinations handler
+    // DataSync permissions for the destinations handler. In addition to
+    // listing locations, it describes each NFS location and its agent to
+    // determine the supported task mode (BASIC vs ENHANCED). Without the
+    // Describe* permissions the mode resolves to "Unknown" in the UI.
+    // These are read-only Describe/List actions and do not support
+    // resource-level scoping, so they are granted on "*".
     getDataSyncDestinationsFn.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['datasync:ListLocations'],
+      actions: [
+        'datasync:ListLocations',
+        'datasync:DescribeLocationNfs',
+        'datasync:DescribeAgent',
+      ],
       resources: ['*'],
     }));
 
