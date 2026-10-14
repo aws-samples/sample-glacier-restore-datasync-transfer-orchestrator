@@ -124,7 +124,7 @@ The testing stack provisions both a Basic mode agent (`DataSyncAgentPublicIp`) a
 curl -v "http://<agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
 
 # Get the Enhanced mode activation key (use DataSyncEnhancedAgentPublicIp from Phase 1 outputs)
-curl -v "http://<enhanced-agent-public-ip>/?gatewayType=SYNC_ENHANCED&activationRegion=us-west-2&no_redirect"
+curl -v "http://<enhanced-agent-public-ip>/?gatewayType=SYNC&activationRegion=us-west-2&no_redirect"
 
 # The activation key is returned directly in the response body
 
