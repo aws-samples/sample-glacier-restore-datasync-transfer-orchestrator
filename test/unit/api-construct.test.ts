@@ -18,7 +18,7 @@ describe('ApiConstruct', () => {
     });
 
     const orchestratorFn = new lambda.Function(stack, 'OrchestratorFn', {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'handler.handler',
       code: lambda.Code.fromInline('exports.handler = async () => {}'),
     });
