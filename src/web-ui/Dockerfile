@@ -1,7 +1,10 @@
 FROM public.ecr.aws/nginx/nginx:1-alpine
 
-# Static single-page app assets
-COPY index.html app.js auth.js config.js styles.css /usr/share/nginx/html/
+# Static single-page app assets.
+# NOTE: config.js is intentionally NOT copied here — it is generated at
+# container startup by docker-entrypoint.sh from runtime environment variables
+# (Cognito IDs, redirect URIs, etc.) and is never committed to source.
+COPY index.html app.js auth.js styles.css /usr/share/nginx/html/
 
 # nginx reverse-proxy config template — rendered by the entrypoint at startup.
 # Placed outside /etc/nginx/templates/ so the base image's envsubst step does
